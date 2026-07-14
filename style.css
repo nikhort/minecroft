@@ -1,0 +1,330 @@
+/* Сброс стилей и общие настройки */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    user-select: none;
+    -webkit-user-drag: none;
+    font-family: 'Courier New', Courier, monospace;
+    font-weight: bold;
+    image-rendering: pixelated;
+}
+
+body, html {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background-color: #000;
+}
+
+#game-container {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 1;
+}
+
+/* Прицел по центру экрана */
+#crosshair {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    transform: translate(-50%, -50%);
+    z-index: 10;
+    pointer-events: none;
+}
+#crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(255, 255, 255, 0.8);
+}
+#crosshair::before { top: 7px; left: 0; width: 16px; height: 2px; }
+#crosshair::after { top: 0; left: 7px; width: 2px; height: 16px; }
+
+/* HUD контейнеры */
+#hud {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 5;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    pointer-events: none;
+}
+
+#stats-bars {
+    width: 360px;
+    margin-bottom: 8px;
+    pointer-events: auto;
+}
+
+.hud-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 4px;
+}
+
+.hud-bar {
+    width: 170px;
+    height: 10px;
+    background: #333;
+    border: 2px solid #111;
+    position: relative;
+}
+
+#health-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    background: #ff2222;
+    width: 100%;
+    transition: width 0.2s ease;
+}
+
+#hunger-bar::after {
+    content: '';
+    display: block;
+    height: 100%;
+    background: #ffaa00;
+    width: 100%;
+    transition: width 0.2s ease;
+}
+
+#xp-container {
+    width: 100%;
+    height: 8px;
+    background: #222;
+    border: 1px solid #111;
+    position: relative;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+#xp-bar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    height: 100%;
+    background: #55ff55;
+    width: 0%;
+}
+
+#xp-text {
+    position: relative;
+    z-index: 2;
+    font-size: 9px;
+    color: #fff;
+    text-shadow: 1px 1px 0 #000;
+}
+
+/* Хотбар */
+#hotbar-container {
+    background: rgba(0, 0, 0, 0.4);
+    padding: 4px;
+    border: 4px solid #4a4a4a;
+    pointer-events: auto;
+}
+
+.inventory-grid {
+    display: grid;
+    gap: 4px;
+}
+
+#hotbar {
+    grid-template-columns: repeat(9, 40px);
+}
+
+/* Ячейки инвентаря */
+.slot {
+    width: 40px;
+    height: 40px;
+    background: #8b8b8b;
+    border: 3px inset #3c3c3c;
+    position: relative;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.slot.selected {
+    border: 3px solid #ffffff;
+    box-shadow: 0 0 5px #ffffff;
+}
+
+.slot:hover {
+    background: #aaaaaa;
+}
+
+/* Элементы внутри ячеек */
+.item-icon {
+    width: 32px;
+    height: 32px;
+    pointer-events: none;
+}
+
+.item-count {
+    position: absolute;
+    bottom: 2px;
+    right: 2px;
+    color: #fff;
+    font-size: 12px;
+    text-shadow: 1px 1px 0 #000;
+    pointer-events: none;
+}
+
+/* Экраны с оверлеями */
+.overlay-screen {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 20;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.hidden {
+    display: none !important;
+}
+
+.menu-box {
+    background: #2e2e2e;
+    border: 6px outset #4a4a4a;
+    padding: 30px;
+    text-align: center;
+    color: white;
+    width: 400px;
+}
+
+.menu-box.dead {
+    border-color: #aa1111;
+}
+
+.menu-box h1 {
+    margin-bottom: 25px;
+    font-size: 28px;
+    text-shadow: 2px 2px 0 #000;
+}
+
+.red-text {
+    color: #ff3333;
+}
+
+.menu-btn {
+    display: block;
+    width: 100%;
+    padding: 12px;
+    margin: 10px 0;
+    background: #6c6c6c;
+    border: 3px outset #8c8c8c;
+    color: white;
+    font-size: 16px;
+    cursor: pointer;
+    text-shadow: 1px 1px 0 #000;
+}
+
+.menu-btn:hover {
+    background: #7c7c7c;
+    border-color: #9c9c9c;
+}
+
+.settings-box {
+    margin-top: 20px;
+    text-align: left;
+    font-size: 13px;
+    color: #ccc;
+}
+
+.settings-box label {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+}
+
+/* Интерфейс инвентаря и крафта */
+#ui-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 15;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.minecraft-panel {
+    background: #c6c6c6;
+    border: 4px outset #ffffff;
+    box-shadow: 5px 5px 15px rgba(0,0,0,0.5);
+    padding: 12px;
+    color: #404040;
+}
+
+#ui-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    border-bottom: 2px solid #8b8b8b;
+    padding-bottom: 4px;
+}
+
+#ui-close-btn {
+    background: #8b8b8b;
+    border: 2px outset #ffffff;
+    cursor: pointer;
+    padding: 2px 8px;
+    color: #333;
+}
+
+#player-inventory {
+    grid-template-columns: repeat(9, 40px);
+    margin-top: 15px;
+}
+
+/* Крафт 2х2 */
+.crafting-2x2-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+#crafting-2x2 {
+    grid-template-columns: repeat(2, 40px);
+}
+
+/* Перетаскиваемый элемент */
+.dragged-item {
+    position: fixed;
+    width: 36px;
+    height: 36px;
+    pointer-events: none;
+    z-index: 100;
+    transform: translate(-50%, -50%);
+}
+
+.arrow {
+    font-size: 24px;
+    margin: 0 15px;
+    color: #404040;
+}
+
+.hidden-screen {
+    display: none !important;
+}

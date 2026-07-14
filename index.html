@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JS-Craft 3D</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <div id="crosshair"></div>
+
+    <div id="hud">
+        <div id="stats-bars">
+            <div class="hud-row">
+                <div id="health-bar" class="hud-bar"></div>
+                <div id="hunger-bar" class="hud-bar"></div>
+            </div>
+            <div id="xp-container">
+                <div id="xp-bar"></div>
+                <span id="xp-text">0</span>
+            </div>
+        </div>
+        
+        <div id="hotbar-container">
+            <div id="hotbar" class="inventory-grid"></div>
+        </div>
+    </div>
+
+    <div id="ui-overlay" class="hidden">
+        <div id="ui-window" class="minecraft-panel">
+            <div id="ui-header">
+                <span id="ui-title">Инвентарь</span>
+                <button id="ui-close-btn">X</button>
+            </div>
+            <div id="ui-content">
+                <div id="inventory-screen">
+                    <div class="crafting-2x2-container">
+                        <div id="crafting-2x2" class="inventory-grid"></div>
+                        <div class="arrow">➔</div>
+                        <div id="crafting-2x2-output" class="slot empty"></div>
+                    </div>
+                    <div id="player-inventory" class="inventory-grid"></div>
+                </div>
+
+                <div id="crafting-3x3-screen" class="hidden-screen">
+                    <div class="crafting-3x3-container">
+                        <div id="crafting-3x3" class="inventory-grid"></div>
+                        <div class="arrow">➔</div>
+                        <div id="crafting-3x3-output" class="slot empty"></div>
+                    </div>
+                </div>
+
+                <div id="chest-screen" class="hidden-screen">
+                    <div id="chest-grid" class="inventory-grid"></div>
+                    <div class="separator"></div>
+                </div>
+
+                <div id="furnace-screen" class="hidden-screen">
+                    <div class="furnace-container">
+                        <div id="furnace-source" class="slot empty"></div>
+                        <div id="furnace-fuel" class="slot empty"></div>
+                        <div id="furnace-progress-arrow">➔</div>
+                        <div id="furnace-output" class="slot empty"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="dragged-item" class="dragged-item"></div>
+
+    <div id="pause-screen" class="overlay-screen">
+        <div class="menu-box">
+            <h1>JS-Craft 3D</h1>
+            <button id="btn-resume" class="menu-btn">Продолжить</button>
+            <button id="btn-save" class="menu-btn">Сохранить мир</button>
+            <div class="settings-box">
+                <label>Чувствительность мыши: 
+                    <input type="range" id="setting-sens" min="1" max="100" value="50">
+                </label>
+                <label>Дальность прорисовки (чанков): 
+                    <input type="range" id="setting-render-dist" min="2" max="12" value="6">
+                </label>
+            </div>
+        </div>
+    </div>
+
+    <div id="death-screen" class="overlay-screen hidden">
+        <div class="menu-box dead">
+            <h1 class="red-text">Вы погибли!</h1>
+            <button id="btn-respawn" class="menu-btn">Возродиться</button>
+        </div>
+    </div>
+
+    <script src="world.js"></script>
+    <script src="entities.js"></script>
+    <script src="ui.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
