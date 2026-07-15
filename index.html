@@ -33,44 +33,42 @@
         <div id="ui-window" class="minecraft-panel">
             <div id="ui-header">
                 <span id="ui-title">Инвентарь</span>
-                <button id="ui-close-btn">X</button>
             </div>
+            
             <div id="ui-content">
-                <div id="inventory-screen">
-                    <div class="crafting-2x2-container">
-                        <div id="crafting-2x2" class="inventory-grid"></div>
-                        <div class="arrow">➔</div>
-                        <div id="crafting-2x2-output" class="slot empty"></div>
+                <div id="ui-top-player" class="ui-top-section">
+                    <div id="player-preview" class="player-box">
+                        <div class="player-model-placeholder">ИГРОК</div>
                     </div>
-                    <div id="player-inventory" class="inventory-grid"></div>
-                </div>
-
-                <div id="crafting-3x3-screen" class="hidden-screen">
-                    <div class="crafting-3x3-container">
-                        <div id="crafting-3x3" class="inventory-grid"></div>
-                        <div class="arrow">➔</div>
-                        <div id="crafting-3x3-output" class="slot empty"></div>
+                    <div class="crafting-container">
+                        <span class="crafting-label">Создание</span>
+                        <div class="crafting-flex">
+                            <div id="crafting-2x2" class="inventory-grid grid-2x2"></div>
+                            <div class="arrow">➔</div>
+                            <div id="crafting-2x2-output" class="slot empty output-slot"></div>
+                        </div>
                     </div>
                 </div>
 
-                <div id="chest-screen" class="hidden-screen">
-                    <div id="chest-grid" class="inventory-grid"></div>
-                    <div class="separator"></div>
-                </div>
-
-                <div id="furnace-screen" class="hidden-screen">
-                    <div class="furnace-container">
-                        <div id="furnace-source" class="slot empty"></div>
-                        <div id="furnace-fuel" class="slot empty"></div>
-                        <div id="furnace-progress-arrow">➔</div>
-                        <div id="furnace-output" class="slot empty"></div>
+                <div id="ui-top-workbench" class="ui-top-section hidden">
+                    <div class="crafting-container workbench-container">
+                        <span class="crafting-label">Создание</span>
+                        <div class="crafting-flex">
+                            <div id="crafting-3x3" class="inventory-grid grid-3x3"></div>
+                            <div class="arrow">➔</div>
+                            <div id="crafting-3x3-output" class="slot empty output-slot"></div>
+                        </div>
                     </div>
                 </div>
+
+                <div id="player-inventory" class="inventory-grid grid-main"></div>
+                <div class="separator-line"></div>
+                <div id="player-inventory-hotbar" class="inventory-grid grid-main"></div>
             </div>
         </div>
     </div>
 
-    <div id="dragged-item" class="dragged-item"></div>
+    <div id="dragged-item" class="hidden"></div>
 
     <div id="pause-screen" class="overlay-screen">
         <div class="menu-box">
