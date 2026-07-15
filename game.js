@@ -1,8 +1,10 @@
 // ==========================================
 // ФАЙЛ: game.js
 // Ядро игры, цикл рендеринга и управление
-// Возвращена стабильная версия ядра, добавлено управление хотбаром.
 // ==========================================
+
+const DAY_DURATION = 1200; // 20 минут в секундах
+const NIGHT_DURATION = 600; // 10 минут в секундах
 
 class Game {
     constructor() {
@@ -22,7 +24,7 @@ class Game {
         this.cameraYaw = 0;
         this.cameraPitch = 0;
 
-        this.dayCycle = 0.1;
+        this.dayCycle = 0.3;
         this.skyColor = new THREE.Color(0x80a0ff);
 
         this.isMining = false;
@@ -168,14 +170,12 @@ class Game {
             }
         };
         
-        // Отрисовка базовых блоков
         drawTile(0, colors.grass); drawTile(1, colors.dirt); drawTile(2, colors.stone);
         drawTile(3, colors.wood); drawTile(4, colors.leaves); drawTile(5, colors.plank);
         drawTile(6, colors.cobble); drawTile(7, colors.glass); drawTile(8, colors.sand);
         drawTile(9, colors.water); drawTile(10, colors.bedrock); drawTile(11, colors.gravel);
         drawTile(12, colors.flower); drawTile(19, [150, 100, 50]);
 
-        // ПИКСЕЛЬНЫЕ ИКОНКИ ДЛЯ ДЕРЕВА, ДОСОК, ВЕРСТАКА
         ctx.fillStyle = '#3a2312';
         for(let i=0; i<16; i+=3) ctx.fillRect((3%16)*16 + i, Math.floor(3/16)*16, 1, 16);
 
@@ -186,7 +186,6 @@ class Game {
         ctx.fillRect((5%16)*16 + 6, Math.floor(5/16)*16 + 8, 1, 4);
         ctx.fillRect((5%16)*16 + 12, Math.floor(5/16)*16 + 12, 1, 4);
 
-        // Верстак
         drawTile(13, colors.plank); 
         ctx.fillStyle = '#8b694a';
         for(let y=0; y<16; y+=4) ctx.fillRect((13%16)*16, Math.floor(13/16)*16 + y, 16, 1);
@@ -200,11 +199,9 @@ class Game {
         ctx.fillRect((14%16)*16, Math.floor(14/16)*16 + 4, 16, 1);
         ctx.fillRect((14%16)*16, Math.floor(14/16)*16 + 10, 16, 1);
 
-        // Руды
         drawOreTile(20, 'rgb(30, 30, 30)'); drawOreTile(21, 'rgb(220, 170, 120)');
         drawOreTile(22, 'rgb(255, 215, 0)'); drawOreTile(23, 'rgb(0, 255, 255)');
 
-        // ГЕНЕРАЦИЯ ИКОНОК ИНСТРУМЕНТОВ
         const drawSprite = (idx, sprite, colorMap) => {
             const tx = idx % 16;
             const ty = Math.floor(idx / 16);
@@ -220,112 +217,40 @@ class Game {
         };
 
         const sprStick = [
-            "                ",
-            "                ",
-            "             ## ",
-            "            ##  ",
-            "           ##   ",
-            "          ##    ",
-            "         ##     ",
-            "        ##      ",
-            "       ##       ",
-            "      ##        ",
-            "     ##         ",
-            "    ##          ",
-            "   ##           ",
-            "  ##            ",
-            "                ",
-            "                "
+            "                ", "                ", "             ## ", "            ##  ",
+            "           ##   ", "          ##    ", "         ##     ", "        ##      ",
+            "       ##       ", "      ##        ", "     ##         ", "    ##          ",
+            "   ##           ", "  ##            ", "                ", "                "
         ];
         const sprSword = [
-            "              O ",
-            "             OOO",
-            "            OOO ",
-            "           OOO  ",
-            "          OOO   ",
-            "         OOO    ",
-            "        OOO     ",
-            "       OOO      ",
-            "      OOO       ",
-            "  #  OOO        ",
-            " ###OO          ",
-            "  ###           ",
-            "   ##           ",
-            "  ##            ",
-            " ##             ",
-            "                "
+            "              O ", "             OOO", "            OOO ", "           OOO  ",
+            "          OOO   ", "         OOO    ", "        OOO     ", "       OOO      ",
+            "      OOO       ", "  #  OOO        ", " ###OO          ", "  ###           ",
+            "   ##           ", "  ##            ", " ##             ", "                "
         ];
         const sprShovel = [
-            "             OO ",
-            "            OOOO",
-            "            OOOO",
-            "             OO ",
-            "            ##  ",
-            "           ##   ",
-            "          ##    ",
-            "         ##     ",
-            "        ##      ",
-            "       ##       ",
-            "      ##        ",
-            "     ##         ",
-            "    ##          ",
-            "   ##           ",
-            "  ##            ",
-            "                "
+            "             OO ", "            OOOO", "            OOOO", "             OO ",
+            "            ##  ", "           ##   ", "          ##    ", "         ##     ",
+            "        ##      ", "       ##       ", "      ##        ", "     ##         ",
+            "    ##          ", "   ##           ", "  ##            ", "                "
         ];
         const sprPickaxe = [
-            "   OOOOOOOOOO   ",
-            " OOOOOOOOOOOOO  ",
-            " OOO      # OOO ",
-            " OO      ##  OO ",
-            " O      ##    O ",
-            "       ##       ",
-            "      ##        ",
-            "     ##         ",
-            "    ##          ",
-            "   ##           ",
-            "  ##            ",
-            " ##             ",
-            "##              ",
-            "                ",
-            "                ",
-            "                "
+            "   OOOOOOOOOO   ", " OOOOOOOOOOOOO  ", " OOO      # OOO ", " OO      ##  OO ",
+            " O      ##    O ", "       ##       ", "      ##        ", "     ##         ",
+            "    ##          ", "   ##           ", "  ##            ", " ##             ",
+            "##              ", "                ", "                ", "                "
         ];
         const sprAxe = [
-            "       OOOO     ",
-            "      OOOOOO    ",
-            "      OOOOOO    ",
-            "       ##OOO    ",
-            "      ## OO     ",
-            "     ##         ",
-            "    ##          ",
-            "   ##           ",
-            "  ##            ",
-            " ##             ",
-            "##              ",
-            "                ",
-            "                ",
-            "                ",
-            "                ",
-            "                "
+            "       OOOO     ", "      OOOOOO    ", "      OOOOOO    ", "       ##OOO    ",
+            "      ## OO     ", "     ##         ", "    ##          ", "   ##           ",
+            "  ##            ", " ##             ", "##              ", "                ",
+            "                ", "                ", "                ", "                "
         ];
         const sprHoe = [
-            "      OOOOO     ",
-            "     OOOOOOO    ",
-            "     OO  ##     ",
-            "     O   ##     ",
-            "        ##      ",
-            "       ##       ",
-            "      ##        ",
-            "     ##         ",
-            "    ##          ",
-            "   ##           ",
-            "  ##            ",
-            " ##             ",
-            "##              ",
-            "                ",
-            "                ",
-            "                "
+            "      OOOOO     ", "     OOOOOOO    ", "     OO  ##     ", "     O   ##     ",
+            "        ##      ", "       ##       ", "      ##        ", "     ##         ",
+            "    ##          ", "   ##           ", "  ##            ", " ##             ",
+            "##              ", "                ", "                ", "                "
         ];
 
         const colWood = { '#': '#5c3a21', 'O': '#a06535' }; 
@@ -398,7 +323,6 @@ class Game {
                 }
             }
 
-            // ПЕРЕКЛЮЧЕНИЕ ХОТБАРА С КЛАВИАТУРЫ (1-9)
             if (this.player && this.player.alive && !this.ui.isOpen && document.pointerLockElement === document.body) {
                 if (e.code.startsWith('Digit')) {
                     const digit = parseInt(e.key);
@@ -422,7 +346,6 @@ class Game {
             }
         });
 
-        // ПЕРЕКЛЮЧЕНИЕ ХОТБАРА КОЛЕСИКОМ МЫШИ
         document.addEventListener('wheel', (e) => {
             if (!this.player || !this.player.alive || this.ui.isOpen || document.pointerLockElement !== document.body) return;
 
@@ -552,7 +475,6 @@ class Game {
     placeBlock() {
         const target = this.getRaycastIntersection();
         const held = this.player.inventory.getSelectedItem();
-        // Можно ставить только блоки (ID < 30)
         if (target && held && held.id < 30) {
             const p = target.point.clone().add(target.face.normal.clone().multiplyScalar(0.5));
             const bx = Math.floor(p.x); const by = Math.floor(p.y); const bz = Math.floor(p.z);
@@ -644,7 +566,6 @@ class Game {
         this.mobManager.updateEntities(dt, this.player);
         this.mobManager.renderEntities(this.scene);
 
-        // Логика добычи
         if (!this.ui.isOpen) {
             const target = this.getRaycastIntersection();
             if (target && this.player.alive) {
@@ -700,8 +621,17 @@ class Game {
             }
         }
 
-        this.dayCycle += 0.0001;
-        if (this.dayCycle > 1.0) this.dayCycle = 0.0;
+        // Обновление системы дня и ночи
+        const isNightTime = (this.dayCycle > 0.45 && this.dayCycle < 0.95);
+        if (isNightTime) {
+            this.dayCycle += (0.5 / NIGHT_DURATION) * dt;
+        } else {
+            this.dayCycle += (0.5 / DAY_DURATION) * dt;
+        }
+
+        if (this.dayCycle >= 1.0) {
+            this.dayCycle -= 1.0;
+        }
 
         const sunAngle = this.dayCycle * Math.PI * 2;
         this.sunLight.position.set(Math.cos(sunAngle) * 50, Math.sin(sunAngle) * 50, 15);
