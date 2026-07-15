@@ -1,6 +1,6 @@
 // ==========================================
 // ФАЙЛ: game.js
-// Ядро игры, цикл рендеринга и управление
+// Ядро игры, цикл рендеринга и управление (с поддержкой Seed и сохранения мира)
 // ==========================================
 
 class Game {
@@ -23,13 +23,14 @@ class Game {
         this.cameraYaw = 0;
         this.cameraPitch = 0;
 
-        this.dayCycle = 0.1; // 0.1 - начало ясного дня
+        this.dayCycle = 0.1;
         this.skyColor = new THREE.Color(0x80a0ff);
 
         this.initThree();
         this.generateProceduralAtlas();
         this.initWorld();
         this.initInput();
+        this.initMenuButtons();
         this.spawnPlayer();
         this.animate();
     }
@@ -39,14 +40,13 @@ class Game {
         this.scene.fog = new THREE.FogExp2(0x80a0ff, 0.03);
 
         this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-        this.camera.rotation.order = 'YXZ'; // Исключает появление Roll при совмещении Yaw/Pitch
+        this.camera.rotation.order = 'YXZ';
 
         this.renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
         this.renderer.setSize(window.innerWidth, window.innerHeight);
         this.renderer.shadowMap.enabled = true;
         this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
         
-        // Поиск или создание контейнера
         let container = document.getElementById('game-container');
         if (!container) {
             container = document.createElement('div');
@@ -71,7 +71,6 @@ class Game {
         this.sunLight.shadow.camera.bottom = -d;
         this.scene.add(this.sunLight);
 
-        // Селектор рамки куба блока перед глазами
         const selectGeo = new THREE.BoxGeometry(1.002, 1.002, 1.002);
         const edges = new THREE.EdgesGeometry(selectGeo);
         this.blockSelector = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x000000 }));
@@ -132,36 +131,40 @@ class Game {
     }
 
     initWorld() {
-        this.world = new World();
+        // Инициализация Seed: загрузка сохранённого или создание нового
+        let currentSeed = localStorage.getItem('jscraft_current_seed');
+        if (!currentSeed) {
+            currentSeed = Math.floor(Math.random() * 2147483647);
+            localStorage.setItem('jscraft_current_seed', currentSeed);
+        } else {
+            currentSeed = parseInt(currentSeed, 10);
+        }
+
+        this.world = new World(currentSeed);
         this.ui = new UISystem();
         this.mobManager = new MobManager(this);
     }
 
     initInput() {
         document.body.addEventListener('click', () => {
-            // Разрешено кликать только если игрок жив
             if (this.player && this.player.alive) {
                 if (document.pointerLockElement !== document.body) {
                     document.body.requestPointerLock();
-                    // ИСПРАВЛЕНИЕ ОШИБКИ №2: Принудительно скрываем стартовое окно/меню паузы
                     const pauseScreen = document.getElementById('pause-screen');
                     if (pauseScreen) pauseScreen.classList.add('hidden');
                 }
             }
         });
 
-        // ИСПРАВЛЕНИЕ ОШИБКИ №3: Восстановлена потерянная логика клавиш Escape и E
         document.addEventListener('keydown', (e) => { 
             this.keys[e.code] = true; 
             
-            // Вызов меню паузы на Escape
             if (e.code === 'Escape') {
                 document.exitPointerLock();
                 const pauseScreen = document.getElementById('pause-screen');
                 if (pauseScreen) pauseScreen.classList.remove('hidden');
             }
             
-            // Открытие инвентаря на E
             if (e.code === 'KeyE') {
                 const overlay = document.getElementById('ui-overlay');
                 if (overlay) {
@@ -174,38 +177,15 @@ class Game {
                     }
                 }
             }
-
-            // Выбор слота в хотбаре по цифрам 1-9
-            if (e.code.startsWith('Digit') && e.code.length === 6) {
-                const digit = parseInt(e.code[5], 10);
-                if (digit >= 1 && digit <= 9) {
-                    if (this.player && this.player.inventory) {
-                        this.player.inventory.selectedHotbarIndex = digit - 1;
-                        this.player.inventory.updateUI();
-                    }
-                }
-            }
         });
         
         document.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
-
-        document.addEventListener('wheel', (e) => {
-            if (document.pointerLockElement === document.body && this.player && this.player.inventory) {
-                if (e.deltaY > 0) {
-                    this.player.inventory.selectedHotbarIndex = (this.player.inventory.selectedHotbarIndex + 1) % 9;
-                } else {
-                    this.player.inventory.selectedHotbarIndex = (this.player.inventory.selectedHotbarIndex + 8) % 9;
-                }
-                this.player.inventory.updateUI();
-            }
-        });
 
         document.addEventListener('mousemove', (e) => {
             if (document.pointerLockElement === document.body && this.player.alive) {
                 this.cameraYaw -= e.movementX * this.sensitivity;
                 this.cameraPitch -= e.movementY * this.sensitivity;
 
-                // Ограничение камеры: строго от -89 до +89 градусов
                 const limit = 89 * Math.PI / 180;
                 this.cameraPitch = Math.max(-limit, Math.min(limit, this.cameraPitch));
 
@@ -220,10 +200,70 @@ class Game {
         });
     }
 
+    initMenuButtons() {
+        // Привязка кнопок меню паузы
+        const btnResume = document.getElementById('btn-resume');
+        if (btnResume) {
+            btnResume.addEventListener('click', () => {
+                const pauseScreen = document.getElementById('pause-screen');
+                if (pauseScreen) pauseScreen.classList.add('hidden');
+                document.body.requestPointerLock();
+            });
+        }
+
+        const btnSave = document.getElementById('btn-save');
+        if (btnSave) {
+            btnSave.addEventListener('click', () => {
+                this.world.saveModifiedBlocks();
+                alert('Мир (Seed: ' + this.world.seed + ') успешно сохранён!');
+            });
+        }
+
+        // Добавление кнопки "Создать новый мир", если её нет в HTML
+        const menuBox = document.querySelector('#pause-screen .menu-box');
+        if (menuBox && !document.getElementById('btn-new-world')) {
+            const btnNew = document.createElement('button');
+            btnNew.id = 'btn-new-world';
+            btnNew.className = 'menu-btn';
+            btnNew.innerText = 'Создать новый мир';
+            btnNew.addEventListener('click', () => {
+                if (confirm('Сгенерировать совершенно новый случайный мир? Текущие несохранённые изменения будут сброшены.')) {
+                    // Генерируем новый Seed и перезапускаем мир
+                    const newSeed = Math.floor(Math.random() * 2147483647);
+                    localStorage.setItem('jscraft_current_seed', newSeed);
+                    
+                    // Очистка старой сцены от чанков и мобов
+                    for (let key in this.world.chunks) {
+                        if (this.world.chunks[key].mesh) {
+                            this.scene.remove(this.world.chunks[key].mesh);
+                        }
+                    }
+                    this.mobManager.mobs.forEach(m => { if (m.mesh) this.scene.remove(m.mesh); });
+                    this.mobManager.mobs = [];
+                    this.mobManager.drops.forEach(d => { if (d.mesh) this.scene.remove(d.mesh); });
+                    this.mobManager.drops = [];
+
+                    // Пересоздание мира с новым Seed
+                    this.world = new World(newSeed);
+                    this.spawnPlayer();
+
+                    const pauseScreen = document.getElementById('pause-screen');
+                    if (pauseScreen) pauseScreen.classList.add('hidden');
+                    document.body.requestPointerLock();
+                }
+            });
+            
+            // Вставляем кнопку после кнопки сохранения
+            if (btnSave && btnSave.nextSibling) {
+                menuBox.insertBefore(btnNew, btnSave.nextSibling);
+            } else {
+                menuBox.appendChild(btnNew);
+            }
+        }
+    }
+
     spawnPlayer() {
-        // ИСПРАВЛЕНИЕ ОШИБКИ №1: Принудительно генерируем чанк под игроком ДО создания Entity.
-        // Передаём 'this' в качестве экземпляра игры, чтобы спавн жителей в деревне мог сработать сразу при загрузке.
-        this.world.updateVisibleChunks(0, 0, this.scene, this.materials, this);
+        this.world.updateVisibleChunks(0, 0, this.scene, this.materials);
 
         this.player = new Player(this.world);
         this.player.inventory = this.ui.slots ? this.ui : new InventorySystem();
@@ -232,7 +272,6 @@ class Game {
     }
 
     playSound(type) {
-        // Процедурный генератор аудиоэффектов
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
@@ -266,14 +305,12 @@ class Game {
 
             const bType = this.world.getBlockWorld(bx, by, bz);
             if (bType !== BLOCK.AIR && bType !== BLOCK.BEDROCK) {
-                // Если мы попали по мобу
                 this.world.setBlockWorld(bx, by, bz, BLOCK.AIR);
                 this.player.inventory.giveItem(bType, 1);
                 this.playSound('break');
             }
         }
 
-        // Альтернативный клик: атака по мобам через рейкаст
         this.checkAttackToMobs();
     }
 
@@ -287,7 +324,6 @@ class Game {
         const hits = raycaster.intersectObjects(meshes, true);
 
         if (hits.length > 0 && hits[0].distance < 4.0) {
-            // Ищем моба, у которого данный mesh
             const hitMesh = hits[0].object;
             let parent = hitMesh;
             while (parent && parent.parent !== this.scene) {
@@ -296,10 +332,9 @@ class Game {
 
             const mob = this.mobManager.mobs.find(m => m.mesh === parent);
             if (mob) {
-                // Отдача/толчок
                 const knock = mob.position.clone().sub(this.player.position).normalize();
                 knock.y = 0.5;
-                mob.takeDamage(4, knock); // Сносит 2 сердечка за удар мечом
+                mob.takeDamage(4, knock);
                 this.playSound('break');
             }
         }
@@ -349,21 +384,17 @@ class Game {
     }
 
     respawn() {
-        // СБРОС СТАТУСА: инвентарь и мир НЕ стираются!
         this.player.health = this.player.maxHealth;
         this.player.hunger = this.player.maxHunger;
         this.player.alive = true;
         this.player.velocity.set(0, 0, 0);
 
-        // ИСПРАВЛЕНИЕ ОШИБКИ №1: Аналогично spawnPlayer
-        this.world.updateVisibleChunks(0, 0, this.scene, this.materials, this);
+        this.world.updateVisibleChunks(0, 0, this.scene, this.materials);
         const sy = this.world.getSurfaceHeight(0, 0);
         this.player.position.set(0, sy > 10 ? sy + 2 : 100, 0);
 
-        // Очистим агрессивных мобов у спавна, чтобы не убили сразу
         this.mobManager.clearAllHostileMobs();
 
-        // Закрываем окно смерти
         this.ui.hideDeathScreen();
         document.body.requestPointerLock();
     }
@@ -372,11 +403,10 @@ class Game {
         requestAnimationFrame(() => this.animate());
 
         const now = performance.now();
-        const dt = Math.min((now - this.lastTime) / 1000, 0.1); // Лимит лага кадров
+        const dt = Math.min((now - this.lastTime) / 1000, 0.1);
         this.lastTime = now;
 
         if (this.player.alive) {
-            // Логика управления Движением
             let forwardInput = 0;
             let sideInput = 0;
 
@@ -389,7 +419,6 @@ class Game {
             const isCrouching = this.keys['ShiftLeft'];
             const isSprinting = this.keys['ControlLeft'];
 
-            // Вычисляем плоские векторы движения из YAW камеры
             const yaw = this.cameraYaw;
             const fx = -Math.sin(yaw);
             const fz = -Math.cos(yaw);
@@ -399,7 +428,6 @@ class Game {
             let dx = forwardInput * fx + sideInput * rx;
             let dz = forwardInput * fz + sideInput * rz;
 
-            // Нормализация диагоналей
             const len = Math.sqrt(dx * dx + dz * dz);
             if (len > 0) {
                 dx /= len;
@@ -408,30 +436,24 @@ class Game {
 
             this.player.tickPhysics(dx, dz, isJumping, isCrouching, isSprinting);
             
-            // Камера жестко следует за головой
             this.camera.position.copy(this.player.position);
             this.camera.position.y += 1.6;
         } else {
-            // Если игрок мёртв — плавно выходим из мыши и открываем экран
             if (document.pointerLockElement === document.body) {
                 document.exitPointerLock();
             }
             this.ui.showDeathScreen();
         }
 
-        // Вектор вращения камеры (Roll строго равен 0)
         this.camera.rotation.set(this.cameraPitch, this.cameraYaw, 0);
         this.camera.updateMatrixWorld();
 
-        // Динамическое обновление чанков
-        this.world.updateVisibleChunks(this.player.position.x, this.player.position.z, this.scene, this.materials, this);
+        this.world.updateVisibleChunks(this.player.position.x, this.player.position.z, this.scene, this.materials);
 
-        // Спавн и обновление ИИ
         this.mobManager.updateMobSpawning(this.player.position, this.world);
         this.mobManager.updateEntities(dt, this.player);
         this.mobManager.renderEntities(this.scene);
 
-        // Обновление Селектора наведения
         const target = this.getRaycastIntersection();
         if (target && this.player.alive) {
             const p = target.point.clone().sub(target.face.normal.clone().multiplyScalar(0.5));
@@ -441,7 +463,6 @@ class Game {
             this.blockSelector.visible = false;
         }
 
-        // Смена времени суток (1 цикл = ~6 минут реального времени)
         this.dayCycle += 0.0001;
         if (this.dayCycle > 1.0) this.dayCycle = 0.0;
 
@@ -452,7 +473,6 @@ class Game {
         this.renderer.setClearColor(this.skyColor.clone().multiplyScalar(skyIntensity));
         this.scene.fog.color.copy(this.skyColor).multiplyScalar(skyIntensity);
 
-        // HUD прогресс-бары
         const hpBar = document.getElementById('health-bar');
         if (hpBar) {
             hpBar.style.width = `${(this.player.health / this.player.maxHealth) * 100}%`;
@@ -466,7 +486,6 @@ class Game {
     }
 }
 
-// Запуск игрового движка
 window.onload = () => {
     window.gameInstance = new Game();
 };
