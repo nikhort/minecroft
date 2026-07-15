@@ -1,7 +1,6 @@
 // ==========================================
 // ФАЙЛ: world.js
 // Хранение вокселей, генерация ландшафта и деревень на основе Seed
-// (Добавлена генерация руд и новые виды деревьев)
 // ==========================================
 
 const CHUNK_SIZE = 16;
@@ -181,7 +180,7 @@ class World {
                 const wx = cx * CHUNK_SIZE + x;
                 const wz = cz * CHUNK_SIZE + z;
 
-                // Генерация биомов
+                // Биомы
                 const biomeNoise = smoothNoise(wx * 0.005, wz * 0.005, this.seed + 1000);
                 let biomeType = 'plains';
                 if (biomeNoise > 0.7) biomeType = 'forest';
@@ -197,7 +196,6 @@ class World {
                 const riverNoise = smoothNoise(wx * 0.015, wz * 0.015, this.seed + 500);
                 if (riverNoise < 0.22 && riverNoise > 0.18) height -= 6; 
 
-                // Выбор блоков для поверхности в зависимости от биома
                 let surfaceBlock = BLOCK.GRASS;
                 let subBlock = BLOCK.DIRT;
                 if (biomeType === 'hills' && e3 > 0.4) {
@@ -222,29 +220,42 @@ class World {
                     else chunk.setBlock(x, y, z, BLOCK.AIR);
                 }
 
-                // Генерация деревьев и цветов по правилам биомов
+                // Генерация деревьев и цветов
                 if (terrainY > 0 && surfaceBlock === BLOCK.GRASS) {
-                    let treeChance = 0.001;
-                    let flowerChance = 0.02;
+                    // ЦВЕТЫ: спавнятся только в очень редких пятнах (патчах) группами
+                    const flowerPatchNoise = smoothNoise(wx * 0.02, wz * 0.02, this.seed + 3000);
+                    const flowerRNG = hash2D(wx, wz, this.seed + 4000);
+                    
+                    if (flowerPatchNoise > 0.8 && flowerRNG < 0.05) {
+                        chunk.setBlock(x, terrainY + 1, z, BLOCK.FLOWER);
+                    }
 
+                    // ЛЕСА: Естественная плотность через шум
+                    const forestDensityNoise = smoothNoise(wx * 0.03, wz * 0.03, this.seed + 2000);
+                    let treeChance = 0;
+                    
                     if (biomeType === 'hills') {
-                        treeChance = 0.005;
-                        flowerChance = 0.0;
+                        treeChance = forestDensityNoise > 0.6 ? 0.01 : 0.001;
                     } else if (biomeType === 'sparse_forest') {
-                        treeChance = 0.025;
-                        flowerChance = 0.01;
+                        treeChance = forestDensityNoise > 0.5 ? 0.03 : 0.002;
                     } else if (biomeType === 'forest') {
-                        treeChance = 0.08;
-                        flowerChance = 0.01;
+                        if (forestDensityNoise > 0.65) treeChance = 0.15; // Густой лес
+                        else if (forestDensityNoise > 0.4) treeChance = 0.06; // Обычный лес
+                        else treeChance = 0.005; // Поляны в лесу
+                    } else { // Равнины
+                        treeChance = forestDensityNoise > 0.8 ? 0.002 : 0.0001; 
                     }
 
                     const treeHash = hash2D(wx, wz, this.seed + 777);
-                    
+
                     if (treeHash < treeChance) {
-                        // Проверка на минимальную дистанцию между деревьями (радиус 3 блока)
+                        const isMega = (biomeType === 'forest' && hash2D(wx, wz, this.seed + 999) < 0.015);
+                        const radius = isMega ? 5 : 2; // Мега-дереву нужно больше места
+                        
                         let spaced = true;
-                        for (let dx = -3; dx <= 3; dx++) {
-                            for (let dz = -3; dz <= 3; dz++) {
+                        // Локальный максимум: проверяем соседей на более высокий приоритет спавна
+                        for (let dx = -radius; dx <= radius; dx++) {
+                            for (let dz = -radius; dz <= radius; dz++) {
                                 if (dx === 0 && dz === 0) continue;
                                 if (hash2D(wx + dx, wz + dz, this.seed + 777) < treeHash) {
                                     spaced = false;
@@ -254,7 +265,6 @@ class World {
                             if (!spaced) break;
                         }
 
-                        // Проверка на пересечение с деревнями (нельзя расти внутри)
                         let inVillage = false;
                         if (spaced) {
                             const regionX = Math.floor(wx / 8 / CHUNK_SIZE);
@@ -264,7 +274,7 @@ class World {
                                     const v = this.getVillageInRegion(rx, rz);
                                     if (v) {
                                         const distSq = (wx - v.worldX)**2 + (wz - v.worldZ)**2;
-                                        if (distSq < 400) { // Если в радиусе 20 блоков от центра деревни
+                                        if (distSq < 400) { // Деревья не растут близко к центру деревни
                                             inVillage = true;
                                             break;
                                         }
@@ -275,10 +285,8 @@ class World {
                         }
 
                         if (spaced && !inVillage) {
-                            this.buildTree(chunk, x, terrainY + 1, z, treeHash);
+                            this.buildTree(chunk, x, terrainY + 1, z, treeHash, isMega);
                         }
-                    } else if (treeHash < treeChance + flowerChance) {
-                        chunk.setBlock(x, terrainY + 1, z, BLOCK.FLOWER);
                     }
                 }
             }
@@ -334,84 +342,141 @@ class World {
         }
     }
 
-    // Построение разнообразных деревьев
-    buildTree(chunk, tx, ty, tz, randomHash) {
-        const typeVal = (randomHash * 1000) % 3;
-        let height = 4;
-        let radius = 2;
-        let type = 'medium';
+    // ==========================================
+    // ГЕНЕРАЦИЯ ДЕРЕВЬЕВ
+    // ==========================================
 
-        if (typeVal < 1.0) {
-            type = 'small';
-            height = 3 + Math.floor(randomHash * 100) % 2; // высота 3 или 4
-            radius = 1;
-        } else if (typeVal < 2.0) {
-            type = 'medium';
-            height = 4 + Math.floor(randomHash * 100) % 3; // высота от 4 до 6
-            radius = 2;
-        } else {
-            type = 'large';
-            height = 6 + Math.floor(randomHash * 100) % 3; // высота от 6 до 8
-            radius = 2;
+    safeSetTrunk(chunk, nx, ny, nz) {
+        if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE && ny >= 0 && ny < CHUNK_HEIGHT) {
+            chunk.setBlock(nx, ny, nz, BLOCK.WOOD);
         }
+    }
 
-        // Ствол
-        for (let h = 0; h < height; h++) {
-            if (ty + h < CHUNK_HEIGHT) {
-                chunk.setBlock(tx, ty + h, tz, BLOCK.WOOD);
+    safeSetLeaf(chunk, nx, ny, nz) {
+        if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE && ny >= 0 && ny < CHUNK_HEIGHT) {
+            if (chunk.getBlock(nx, ny, nz) === BLOCK.AIR) {
+                chunk.setBlock(nx, ny, nz, BLOCK.LEAVES);
             }
         }
+    }
 
-        // Генерация листвы в зависимости от размера
+    buildTree(chunk, tx, ty, tz, randomHash, isMega) {
+        if (isMega) {
+            this.buildMegaTree(chunk, tx, ty, tz, randomHash);
+        } else {
+            this.buildNormalTree(chunk, tx, ty, tz, randomHash);
+        }
+    }
+
+    buildMegaTree(chunk, tx, ty, tz, randomHash) {
+        const height = 12 + Math.floor(randomHash * 100) % 6; // Высота ствола от 12 до 17 блоков
+        
+        // Ствол 2x2
+        for (let h = 0; h < height; h++) {
+            this.safeSetTrunk(chunk, tx, ty + h, tz);
+            this.safeSetTrunk(chunk, tx + 1, ty + h, tz);
+            this.safeSetTrunk(chunk, tx, ty + h, tz + 1);
+            this.safeSetTrunk(chunk, tx + 1, ty + h, tz + 1);
+        }
+        
+        // Случайная ветка
+        if (randomHash > 0.5 && height > 14) {
+            this.safeSetTrunk(chunk, tx - 1, ty + height - 5, tz);
+            this.safeSetLeaf(chunk, tx - 2, ty + height - 5, tz);
+        }
+        
+        // Крона мега-дерева
+        const leafBottom = ty + height - 7;
+        const leafTop = ty + height + 2;
+        for (let ny = leafBottom; ny <= leafTop; ny++) {
+            let r = 3;
+            if (ny === leafBottom || ny === leafTop) r = 1;
+            else if (ny === leafBottom + 1 || ny === leafTop - 1) r = 2;
+            else if (ny === ty + height - 3) r = 4; // Самая широкая часть кроны
+
+            for (let dx = -r; dx <= r + 1; dx++) { // +1 из-за толщины ствола
+                for (let dz = -r; dz <= r + 1; dz++) {
+                    let centerX = dx < 1 ? dx : dx - 1;
+                    let centerZ = dz < 1 ? dz : dz - 1;
+                    // Обрезаем углы для естественной формы
+                    if (Math.abs(centerX) + Math.abs(centerZ) > r + 1) continue;
+                    
+                    this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
+                }
+            }
+        }
+    }
+
+    buildNormalTree(chunk, tx, ty, tz, randomHash) {
+        const typeVal = (randomHash * 10000) % 100;
+        let height = 4;
+        let type = 'medium';
+
+        if (typeVal < 30) {
+            type = 'small';
+            height = 3 + Math.floor(randomHash * 100) % 2; // Высота 3-4
+        } else if (typeVal < 70) {
+            type = 'medium';
+            height = 4 + Math.floor(randomHash * 100) % 3; // Высота 4-6
+        } else {
+            type = 'large';
+            height = 6 + Math.floor(randomHash * 100) % 3; // Высота 6-8
+        }
+
+        // Центральный ствол (ставим до листвы, чтобы листва не заменяла древесину)
+        for (let h = 0; h < height; h++) {
+            this.safeSetTrunk(chunk, tx, ty + h, tz);
+        }
+
+        // Генерация листвы
+        let leafBottom, leafTop;
         if (type === 'small') {
-            const leafBottom = ty + height - 2;
-            const leafTop = ty + height + 1;
+            leafBottom = ty + height - 2;
+            leafTop = ty + height + 1;
             for (let ny = leafBottom; ny <= leafTop; ny++) {
-                const r = (ny >= ty + height) ? 1 : Math.max(1, radius);
+                const r = 1;
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dz = -r; dz <= r; dz++) {
-                        if (Math.abs(dx) === r && Math.abs(dz) === r && ny === leafBottom) continue;
-                        const nx = tx + dx; const nz = tz + dz;
-                        if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE && ny < CHUNK_HEIGHT) {
-                            if (chunk.getBlock(nx, ny, nz) === BLOCK.AIR) chunk.setBlock(nx, ny, nz, BLOCK.LEAVES);
-                        }
+                        // Скругляем макушку
+                        if (Math.abs(dx) === r && Math.abs(dz) === r && ny === leafTop) continue;
+                        this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
                     }
                 }
             }
         } else if (type === 'medium') {
-            const leafBottom = ty + height - 3;
-            const leafTop = ty + height + 1;
+            leafBottom = ty + height - 3;
+            leafTop = ty + height + 1;
             for (let ny = leafBottom; ny <= leafTop; ny++) {
                 const r = (ny >= ty + height) ? 1 : 2;
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dz = -r; dz <= r; dz++) {
-                        if (Math.abs(dx) === r && Math.abs(dz) === r && (ny === leafBottom || ny === leafTop - 1)) continue;
-                        const nx = tx + dx; const nz = tz + dz;
-                        if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE && ny < CHUNK_HEIGHT) {
-                            if (chunk.getBlock(nx, ny, nz) === BLOCK.AIR) chunk.setBlock(nx, ny, nz, BLOCK.LEAVES);
-                        }
+                        // Скругляем низ кроны и макушку
+                        if (Math.abs(dx) === r && Math.abs(dz) === r && (ny === leafBottom || ny === leafTop)) continue;
+                        this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
                     }
                 }
             }
         } else if (type === 'large') {
-            const leafBottom = ty + height - 4;
-            const leafTop = ty + height + 2;
+            leafBottom = ty + height - 4;
+            leafTop = ty + height + 2;
             for (let ny = leafBottom; ny <= leafTop; ny++) {
                 let r = 2;
                 if (ny === leafBottom || ny === leafTop) r = 1;
-                if (ny === ty + height) r = 3; // Утолщение листвы посередине кроны
+                if (ny === ty + height - 1) r = 3; // Широкая юбка
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dz = -r; dz <= r; dz++) {
-                        if (Math.abs(dx) === r && Math.abs(dz) === r && r > 1) continue; // скругленные углы
-                        const nx = tx + dx; const nz = tz + dz;
-                        if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE && ny < CHUNK_HEIGHT) {
-                            if (chunk.getBlock(nx, ny, nz) === BLOCK.AIR) chunk.setBlock(nx, ny, nz, BLOCK.LEAVES);
-                        }
+                        // Скругляем широкие уровни
+                        if (Math.abs(dx) === r && Math.abs(dz) === r && r > 1) continue;
+                        this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
                     }
                 }
             }
         }
     }
+
+    // ==========================================
+    // ДЕРЕВНИ
+    // ==========================================
 
     getVillageInRegion(regionX, regionZ) {
         const regSeed = Math.imul(regionX, 1597334677) ^ Math.imul(regionZ, 3812015801) ^ this.seed;
