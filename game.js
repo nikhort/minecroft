@@ -36,7 +36,7 @@ class Game {
             [BLOCK.PLANK]: 1.0, [BLOCK.WOOD]: 2.0, [BLOCK.STONE]: 4.0,
             [BLOCK.COBBLESTONE]: 4.0, [BLOCK.COAL_ORE]: 5.0, [BLOCK.IRON_ORE]: 6.0,
             [BLOCK.GOLD_ORE]: 6.5, [BLOCK.DIAMOND_ORE]: 7.0, [BLOCK.GLASS]: 0.3,
-            [BLOCK.CRAFTING_TABLE]: 2.0, [BLOCK.BEDROCK]: Infinity
+            [BLOCK.CRAFTING_TABLE]: 2.0, [BLOCK.CHEST]: 2.5, [BLOCK.BEDROCK]: Infinity
         };
 
         this.initThree();
@@ -136,11 +136,12 @@ class Game {
         const atlasCanvas = document.createElement('canvas');
         atlasCanvas.width = 256; atlasCanvas.height = 256;
         const ctx = atlasCanvas.getContext('2d');
+        ctx.clearRect(0, 0, 256, 256);
 
         const colors = {
             dirt: [130, 85, 45], grass: [90, 160, 50], stone: [120, 120, 120],
             wood: [100, 75, 45], leaves: [40, 110, 40], plank: [170, 140, 95],
-            cobble: [100, 100, 100], glass: [220, 240, 255], sand: [215, 195, 140],
+            cobble: [100, 100, 100], sand: [215, 195, 140],
             water: [50, 100, 200], bedrock: [30, 30, 30], gravel: [130, 130, 130],
             flower: [255, 100, 150]
         };
@@ -169,12 +170,39 @@ class Game {
                 ctx.fillRect(tx * 16 + ox, ty * 16 + oy, 1, 1);
             }
         };
+
+        // Специальная отрисовка прозрачного стекла (тайл 7)
+        const drawGlassTile = (idx) => {
+            const tx = idx % 16; const ty = Math.floor(idx / 16);
+            ctx.clearRect(tx * 16, ty * 16, 16, 16);
+            for (let x = 0; x < 16; x++) {
+                for (let y = 0; y < 16; y++) {
+                    const isBorder = (x === 0 || x === 15 || y === 0 || y === 15);
+                    const isStreak = (x === 3 && y > 2 && y < 13) || (x === 12 && y > 3 && y < 12);
+                    if (isBorder) {
+                        ctx.fillStyle = 'rgba(180, 220, 250, 0.95)';
+                    } else if (isStreak) {
+                        ctx.fillStyle = 'rgba(230, 245, 255, 0.7)';
+                    } else {
+                        ctx.fillStyle = 'rgba(200, 230, 255, 0.3)';
+                    }
+                    ctx.fillRect(tx * 16 + x, ty * 16 + y, 1, 1);
+                }
+            }
+        };
         
         drawTile(0, colors.grass); drawTile(1, colors.dirt); drawTile(2, colors.stone);
         drawTile(3, colors.wood); drawTile(4, colors.leaves); drawTile(5, colors.plank);
-        drawTile(6, colors.cobble); drawTile(7, colors.glass); drawTile(8, colors.sand);
+        drawTile(6, colors.cobble); drawGlassTile(7); drawTile(8, colors.sand);
         drawTile(9, colors.water); drawTile(10, colors.bedrock); drawTile(11, colors.gravel);
         drawTile(12, colors.flower); drawTile(19, [150, 100, 50]);
+
+        // Тайл сундука (20)
+        drawTile(19, [140, 90, 40]);
+        ctx.fillStyle = '#222222';
+        ctx.fillRect((19%16)*16 + 6, Math.floor(19/16)*16 + 6, 4, 5);
+        ctx.fillStyle = '#ffd700';
+        ctx.fillRect((19%16)*16 + 7, Math.floor(19/16)*16 + 7, 2, 3);
 
         ctx.fillStyle = '#3a2312';
         for(let i=0; i<16; i+=3) ctx.fillRect((3%16)*16 + i, Math.floor(3/16)*16, 1, 16);
@@ -274,7 +302,13 @@ class Game {
         texture.magFilter = THREE.NearestFilter;
         texture.minFilter = THREE.NearestFilter;
 
-        this.materials = new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide });
+        // Включаем прозрачность для корректного отображения стекла
+        this.materials = new THREE.MeshLambertMaterial({ 
+            map: texture, 
+            side: THREE.DoubleSide,
+            transparent: true,
+            alphaTest: 0.05
+        });
     }
 
     initWorld() {
@@ -430,6 +464,7 @@ class Game {
         this.player.inventory = this.ui;
         this.player.inventory.giveItem(BLOCK.WOOD, 64);
         this.player.inventory.giveItem(BLOCK.COBBLESTONE, 64);
+        this.player.inventory.giveItem(BLOCK.GLASS, 64);
     }
 
     playSound(type) {

@@ -1,7 +1,7 @@
 // ==========================================
 // ФАЙЛ: world.js
 // Хранение вокселей, генерация ландшафта и деревень на основе Seed
-// (Оптимизированная версия с высокой производительностью)
+// (Оптимизированная версия с высокой производительностью и расширенными деревнями)
 // ==========================================
 
 const CHUNK_SIZE = 16;
@@ -101,10 +101,9 @@ class World {
         this.chunks = {};
         this.spawnedVillages = new Set();
         this.modifiedBlocks = new Map();
-        this.chunkMods = new Map(); // Быстрый индекс модификаций по координатам чанка
-        this.villageCache = new Map(); // Кеш расчёта деревень для регионов
+        this.chunkMods = new Map();
+        this.villageCache = new Map();
         
-        // Очереди для постепенной генерации и создания Mesh
         this.chunkGenQueue = [];
         this.chunkMeshQueue = [];
         this.queuedForGen = new Set();
@@ -219,7 +218,6 @@ class World {
     generateChunk(cx, cz) {
         const chunk = new Chunk(cx, cz);
 
-        // Предварительно собираем информацию о деревнях вокруг, чтобы не считать это внутри цикла деревьев
         const nearbyVillages = [];
         const regionX = Math.floor(cx / 8);
         const regionZ = Math.floor(cz / 8);
@@ -235,7 +233,6 @@ class World {
                 const wx = cx * CHUNK_SIZE + x;
                 const wz = cz * CHUNK_SIZE + z;
 
-                // Биомы
                 const biomeNoise = smoothNoise(wx * 0.005, wz * 0.005, this.seed + 1000);
                 let biomeType = 'plains';
                 if (biomeNoise > 0.7) biomeType = 'forest';
@@ -275,7 +272,6 @@ class World {
                     else chunk.setBlock(x, y, z, BLOCK.AIR);
                 }
 
-                // Генерация деревьев и цветов
                 if (terrainY > 0 && surfaceBlock === BLOCK.GRASS) {
                     const meadowNoise = smoothNoise(wx * 0.015, wz * 0.015, this.seed + 3000); 
                     const patchNoise = smoothNoise(wx * 0.1, wz * 0.1, this.seed + 3001);     
@@ -294,7 +290,6 @@ class World {
                         chunk.setBlock(x, terrainY + 1, z, BLOCK.FLOWER);
                     }
 
-                    // ЛЕСА
                     const forestDensityNoise = smoothNoise(wx * 0.03, wz * 0.03, this.seed + 2000);
                     let treeChance = 0;
                     
@@ -332,7 +327,7 @@ class World {
                             for (let i = 0; i < nearbyVillages.length; i++) {
                                 const v = nearbyVillages[i];
                                 const distSq = (wx - v.worldX)**2 + (wz - v.worldZ)**2;
-                                if (distSq < 400) { 
+                                if (distSq < 600) { 
                                     inVillage = true;
                                     break;
                                 }
@@ -351,7 +346,6 @@ class World {
         this.generateOreVeins(chunk, cx, cz, this.seed);
         this.generateVillageElementsForChunk(chunk, cx, cz);
 
-        // Быстрое применение модификаций игрока из индексированного списка
         const chunkKey = this.getChunkKey(cx, cz);
         const mods = this.chunkMods.get(chunkKey);
         if (mods) {
@@ -530,10 +524,10 @@ class World {
             cz: regionZ * 8 + Math.floor(prng.next() * 6) + 1,
             worldX: (regionX * 8 + Math.floor(prng.next() * 6) + 1) * CHUNK_SIZE + 8,
             worldZ: (regionZ * 8 + Math.floor(prng.next() * 6) + 1) * CHUNK_SIZE + 8,
-            houseCount: Math.floor(prng.next() * 5) + 3,
-            hasFarm: prng.next() < 0.7,
-            roadLength: Math.floor(prng.next() * 20) + 25,
-            villagerCount: Math.floor(prng.next() * 5) + 3,
+            houseCount: Math.floor(prng.next() * 4) + 4,
+            hasFarm: prng.next() < 0.8,
+            roadLength: Math.floor(prng.next() * 15) + 30,
+            villagerCount: Math.floor(prng.next() * 5) + 4,
             prngSeed: regSeed
         };
         this.villageCache.set(cacheKey, village);
@@ -565,6 +559,7 @@ class World {
             if (b !== BLOCK.AIR && b !== BLOCK.LEAVES && b !== BLOCK.WATER) { floorY = y; break; }
         }
 
+        // 1. Главная крестообразная дорожная сеть
         const halfRoad = Math.floor(village.roadLength / 2);
         for (let dx = -halfRoad; dx <= halfRoad; dx++) {
             for (let dz = -1; dz <= 1; dz++) this.placeRoadBlock(chunk, centerWx + dx, floorY, centerWz + dz);
@@ -573,14 +568,71 @@ class World {
             for (let dx = -1; dx <= 1; dx++) this.placeRoadBlock(chunk, centerWx + dx, floorY, centerWz + dz);
         }
 
-        const houseOffsets = [ [-8, -8], [8, -8], [-8, 8], [8, 8], [-16, -8], [16, 8], [-8, 16], [8, -16] ];
+        // 2. Распределение участков под гарантированные постройки
+        const buildings = [];
+        
+        // Церковь (северный конец улицы)
+        buildings.push({
+            type: 'church',
+            x: centerWx - 3,
+            z: centerWz - halfRoad + 2,
+            doorX: centerWx,
+            doorZ: centerWz - halfRoad + 2
+        });
+
+        // Кузница (восточный сектор)
+        buildings.push({
+            type: 'blacksmith',
+            x: centerWx + halfRoad - 10,
+            z: centerWz + 4,
+            doorX: centerWx + halfRoad - 7,
+            doorZ: centerWz + 6
+        });
+
+        // Разнообразные жилые дома
+        const houseOffsets = [
+            [-14, -14], [14, -14], [-14, 14], [14, 14],
+            [-22, -8], [22, 8], [-8, 22], [8, -22]
+        ];
+        
         for (let i = 0; i < village.houseCount && i < houseOffsets.length; i++) {
             const hx = centerWx + houseOffsets[i][0] + Math.floor(prng.next() * 4 - 2);
             const hz = centerWz + houseOffsets[i][1] + Math.floor(prng.next() * 4 - 2);
-            this.generateHouseInChunk(chunk, hx, floorY, hz);
+            buildings.push({
+                type: 'house',
+                x: hx,
+                z: hz,
+                doorX: hx + 3,
+                doorZ: hz
+            });
         }
 
-        if (village.hasFarm) this.generateFarmInChunk(chunk, centerWx + 12, floorY, centerWz - 12);
+        if (village.hasFarm) {
+            buildings.push({
+                type: 'farm',
+                x: centerWx - 18,
+                z: centerWz + 4,
+                doorX: centerWx - 12,
+                doorZ: centerWz + 7
+            });
+        }
+
+        // 3. Соединение дорог и генерация архитектуры
+        for (let i = 0; i < buildings.length; i++) {
+            const b = buildings[i];
+            
+            this.connectRoad(chunk, centerWx, centerWz, b.doorX, floorY, b.doorZ);
+
+            if (b.type === 'church') {
+                this.generateChurchInChunk(chunk, b.x, floorY, b.z, prng);
+            } else if (b.type === 'blacksmith') {
+                this.generateBlacksmithInChunk(chunk, b.x, floorY, b.z, prng);
+            } else if (b.type === 'house') {
+                this.generateHouseInChunk(chunk, b.x, floorY, b.z, prng);
+            } else if (b.type === 'farm') {
+                this.generateFarmInChunk(chunk, b.x, floorY, b.z);
+            }
+        }
     }
 
     placeRoadBlock(chunk, wx, wy, wz) {
@@ -592,30 +644,241 @@ class World {
         chunk.setBlock(bx, wy - 1, bz, BLOCK.COBBLESTONE);
     }
 
-    generateHouseInChunk(chunk, hx, hy, hz) {
-        const w = 5, h = 4, d = 5;
-        for (let x = hx; x < hx + w; x++) {
-            for (let z = hz; z < hz + d; z++) {
-                if (Math.floor(x / CHUNK_SIZE) !== chunk.cx || Math.floor(z / CHUNK_SIZE) !== chunk.cz) continue;
-                const bx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-                const bz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+    connectRoad(chunk, centerWx, centerWz, doorX, wy, doorZ) {
+        const dx = doorX - centerWx;
+        const dz = doorZ - centerWz;
 
-                for (let y = hy + h; y < CHUNK_HEIGHT; y++) chunk.setBlock(bx, y, bz, BLOCK.AIR);
-                for (let y = hy; y < hy + h; y++) {
-                    const isEdgeX = (x === hx || x === hx + w - 1);
-                    const isEdgeZ = (z === hz || z === hz + d - 1);
-                    const isCeil = (y === hy + h - 1);
-                    if (isEdgeX || isEdgeZ || isCeil) chunk.setBlock(bx, y, bz, BLOCK.PLANK);
-                    else chunk.setBlock(bx, y, bz, BLOCK.AIR);
+        if (Math.abs(dx) < Math.abs(dz)) {
+            const step = dx > 0 ? -1 : 1;
+            for (let x = doorX; x !== centerWx; x += step) {
+                for (let zOff = -1; zOff <= 1; zOff++) {
+                    this.placeRoadBlock(chunk, x, wy, doorZ + zOff);
+                }
+            }
+        } else {
+            const step = dz > 0 ? -1 : 1;
+            for (let z = doorZ; z !== centerWz; z += step) {
+                for (let xOff = -1; xOff <= 1; xOff++) {
+                    this.placeRoadBlock(chunk, doorX + xOff, wy, z);
                 }
             }
         }
-        if (Math.floor((hx + 2) / CHUNK_SIZE) === chunk.cx && Math.floor(hz / CHUNK_SIZE) === chunk.cz) {
-            chunk.setBlock((((hx + 2) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE, hy + 1, ((hz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE, BLOCK.GLASS);
+    }
+
+    placeVillageBlock(chunk, wx, wy, wz, blockId) {
+        if (wy < 0 || wy >= CHUNK_HEIGHT) return;
+        if (Math.floor(wx / CHUNK_SIZE) === chunk.cx && Math.floor(wz / CHUNK_SIZE) === chunk.cz) {
+            const bx = ((wx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            const bz = ((wz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+            chunk.setBlock(bx, wy, bz, blockId);
         }
-        if (Math.floor((hx + 1) / CHUNK_SIZE) === chunk.cx && Math.floor((hz + 3) / CHUNK_SIZE) === chunk.cz) {
-            chunk.setBlock((((hx + 1) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE, hy, (((hz + 3) % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE, BLOCK.COBBLESTONE);
+    }
+
+    // ==========================================
+    // ГЕНЕРАТОРЫ НОВЫХ ЗДАНИЙ ДЕРЕВНИ
+    // ==========================================
+
+    generateChurchInChunk(chunk, hx, hy, hz, prng) {
+        const w = 7, d = 11, h = 6, th = 12;
+        for (let x = hx; x < hx + w; x++) {
+            for (let z = hz; z < hz + d; z++) {
+                if (Math.floor(x / CHUNK_SIZE) !== chunk.cx || Math.floor(z / CHUNK_SIZE) !== chunk.cz) continue;
+                
+                // Очистка воздуха над церковью
+                for (let y = hy + 1; y < hy + th + 3; y++) {
+                    this.placeVillageBlock(chunk, x, y, z, BLOCK.AIR);
+                }
+                
+                // Пол
+                this.placeVillageBlock(chunk, x, hy - 1, z, BLOCK.COBBLESTONE);
+
+                const isTower = (z <= hz + 3 && x >= hx + 1 && x <= hx + w - 2);
+                
+                if (isTower) {
+                    for (let y = hy; y < hy + th; y++) {
+                        const isCorner = (x === hx + 1 || x === hx + w - 2) && (z === hz || z === hz + 3);
+                        const isWall = (x === hx + 1 || x === hx + w - 2 || z === hz || z === hz + 3);
+                        
+                        if (isCorner) {
+                            this.placeVillageBlock(chunk, x, y, z, BLOCK.WOOD);
+                        } else if (isWall) {
+                            const isWin = (y >= hy + 5 && y <= hy + 7) || (y >= hy + 9 && y <= hy + 10);
+                            if (isWin && (x === hx + 3 || z === hz)) {
+                                this.placeVillageBlock(chunk, x, y, z, BLOCK.GLASS);
+                            } else {
+                                this.placeVillageBlock(chunk, x, y, z, y < hy + 4 ? BLOCK.COBBLESTONE : BLOCK.STONE);
+                            }
+                        }
+                    }
+                    // Крыша и шпиль колокольни
+                    if (x >= hx + 1 && x <= hx + w - 2 && z >= hz && z <= hz + 3) {
+                        this.placeVillageBlock(chunk, x, hy + th, z, BLOCK.COBBLESTONE);
+                    }
+                    if (x === hx + 3 && z === hz + 1) {
+                        this.placeVillageBlock(chunk, x, hy + th + 1, z, BLOCK.COBBLESTONE);
+                        this.placeVillageBlock(chunk, x, hy + th + 2, z, BLOCK.WOOD);
+                        this.placeVillageBlock(chunk, x, hy + th + 3, z, BLOCK.COBBLESTONE); // Крест
+                    }
+                } else {
+                    // Неф церкви
+                    for (let y = hy; y < hy + h; y++) {
+                        const isCorner = (x === hx || x === hx + w - 1) && (z === hz + 4 || z === hz + d - 1);
+                        const isWall = (x === hx || x === hx + w - 1 || z === hz + d - 1);
+                        
+                        if (isCorner) {
+                            this.placeVillageBlock(chunk, x, y, z, BLOCK.WOOD);
+                        } else if (isWall) {
+                            const isWin = (y >= hy + 2 && y <= hy + 4) && (z % 2 === 1) && (x === hx || x === hx + w - 1);
+                            if (isWin) {
+                                this.placeVillageBlock(chunk, x, y, z, BLOCK.GLASS);
+                            } else {
+                                this.placeVillageBlock(chunk, x, y, z, y < hy + 2 ? BLOCK.COBBLESTONE : BLOCK.PLANK);
+                            }
+                        }
+                    }
+                    // Высокая двускатная крыша нефа
+                    if (x === hx || x === hx + w - 1) this.placeVillageBlock(chunk, x, hy + h, z, BLOCK.PLANK);
+                    else if (x === hx + 1 || x === hx + w - 2) this.placeVillageBlock(chunk, x, hy + h + 1, z, BLOCK.PLANK);
+                    else this.placeVillageBlock(chunk, x, hy + h + 2, z, BLOCK.PLANK);
+
+                    // Интерьер: скамьи и алтарь
+                    if ((z === hz + 6 || z === hz + 8) && (x === hx + 2 || x === hx + 4)) {
+                        this.placeVillageBlock(chunk, x, hy, z, BLOCK.PLANK);
+                    }
+                    if (z === hz + d - 2 && x === hx + 3) {
+                        this.placeVillageBlock(chunk, x, hy, z, BLOCK.COBBLESTONE);
+                        this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.FLOWER);
+                    }
+                }
+            }
         }
+        // Входной проем
+        this.placeVillageBlock(chunk, hx + 3, hy, hz, BLOCK.AIR);
+        this.placeVillageBlock(chunk, hx + 3, hy + 1, hz, BLOCK.AIR);
+    }
+
+    generateBlacksmithInChunk(chunk, hx, hy, hz, prng) {
+        const w = 7, d = 8, h = 5;
+        for (let x = hx; x < hx + w; x++) {
+            for (let z = hz; z < hz + d; z++) {
+                if (Math.floor(x / CHUNK_SIZE) !== chunk.cx || Math.floor(z / CHUNK_SIZE) !== chunk.cz) continue;
+                
+                for (let y = hy + 1; y < hy + h + 2; y++) {
+                    this.placeVillageBlock(chunk, x, y, z, BLOCK.AIR);
+                }
+                
+                // Каменный фундамент
+                this.placeVillageBlock(chunk, x, hy - 1, z, BLOCK.COBBLESTONE);
+                this.placeVillageBlock(chunk, x, hy, z, BLOCK.COBBLESTONE);
+
+                if (z <= hz + 2) {
+                    // Навес кузницы
+                    if ((z === hz) && (x === hx + 1 || x === hx + w - 2)) {
+                        this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.WOOD);
+                        this.placeVillageBlock(chunk, x, hy + 2, z, BLOCK.WOOD);
+                    }
+                    this.placeVillageBlock(chunk, x, hy + 3, z, BLOCK.PLANK);
+                    
+                    // Кузнечная печь и наковальня
+                    if (x === hx + 2 && z === hz + 1) {
+                        for(let py = hy + 1; py <= hy + h; py++) this.placeVillageBlock(chunk, x, py, z, BLOCK.COBBLESTONE);
+                        this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.FLOWER); // Огненное ядро
+                    }
+                    if (x === hx + 4 && z === hz + 1) {
+                        this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.STONE); // Наковальня
+                    }
+                } else {
+                    // Закрытая часть кузницы
+                    for (let y = hy + 1; y < hy + h - 1; y++) {
+                        const isCorner = (x === hx || x === hx + w - 1) && (z === hz + 3 || z === hz + d - 1);
+                        const isWall = (x === hx || x === hx + w - 1 || z === hz + 3 || z === hz + d - 1);
+                        
+                        if (isCorner) {
+                            this.placeVillageBlock(chunk, x, y, z, BLOCK.WOOD);
+                        } else if (isWall) {
+                            const isWin = (y === hy + 2) && (x === hx || x === hx + w - 1) && (z === hz + 5);
+                            this.placeVillageBlock(chunk, x, y, z, isWin ? BLOCK.GLASS : BLOCK.PLANK);
+                        }
+                    }
+                    this.placeVillageBlock(chunk, x, hy + h - 1, z, BLOCK.COBBLESTONE); // Плоская каменная крыша
+
+                    // Сундук с лутом и верстак внутри
+                    if (x === hx + 5 && z === hz + d - 2) this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.CHEST);
+                    if (x === hx + 4 && z === hz + d - 2) this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.CRAFTING_TABLE);
+                }
+            }
+        }
+        this.placeVillageBlock(chunk, hx + 3, hy + 1, hz + 3, BLOCK.AIR); // Дверь под навес
+        this.placeVillageBlock(chunk, hx + 3, hy + 2, hz + 3, BLOCK.AIR);
+    }
+
+    generateHouseInChunk(chunk, hx, hy, hz, prng) {
+        // Случайные архитектурные параметры
+        const w = 5 + Math.floor(prng.next() * 3); // 5, 6, или 7
+        const d = 5 + Math.floor(prng.next() * 4); // 5, 6, 7, или 8
+        const h = 4 + Math.floor(prng.next() * 2); // 4 или 5
+        const roofType = Math.floor(prng.next() * 3); // 0: плоская, 1: двускатная, 2: пирамидальная
+        const hasPorch = prng.next() > 0.4;
+        const matWall = prng.next() > 0.5 ? BLOCK.PLANK : BLOCK.COBBLESTONE;
+
+        for (let x = hx - 1; x < hx + w + 1; x++) {
+            for (let z = hz - 2; z < hz + d + 1; z++) {
+                if (Math.floor(x / CHUNK_SIZE) !== chunk.cx || Math.floor(z / CHUNK_SIZE) !== chunk.cz) continue;
+                
+                for (let y = hy; y < hy + h + 3; y++) {
+                    this.placeVillageBlock(chunk, x, y, z, BLOCK.AIR);
+                }
+
+                // Крыльцо перед входом
+                if (hasPorch && z === hz - 1 && x >= hx + 1 && x <= hx + w - 2) {
+                    this.placeVillageBlock(chunk, x, hy - 1, z, BLOCK.PLANK);
+                    if (x === hx + 1 || x === hx + w - 2) {
+                        this.placeVillageBlock(chunk, x, hy, z, BLOCK.WOOD);
+                        this.placeVillageBlock(chunk, x, hy + 1, z, BLOCK.WOOD);
+                    }
+                    this.placeVillageBlock(chunk, x, hy + 2, z, BLOCK.PLANK);
+                }
+
+                // Основная коробка дома
+                if (x >= hx && x < hx + w && z >= hz && z < hz + d) {
+                    this.placeVillageBlock(chunk, x, hy - 1, z, BLOCK.COBBLESTONE); // Пол
+                    
+                    for (let y = hy; y < hy + h; y++) {
+                        const isCorner = (x === hx || x === hx + w - 1) && (z === hz || z === hz + d - 1);
+                        const isWall = (x === hx || x === hx + w - 1 || z === hz || z === hz + d - 1);
+                        
+                        if (isCorner) {
+                            this.placeVillageBlock(chunk, x, y, z, BLOCK.WOOD);
+                        } else if (isWall) {
+                            const isWin = (y === hy + 1 || (y === hy + 2 && h > 4)) && ((x === hx + 2) || (z === hz + Math.floor(d/2)));
+                            this.placeVillageBlock(chunk, x, y, z, isWin ? BLOCK.GLASS : matWall);
+                        }
+                    }
+
+                    // Генерация крыш разного типа
+                    if (roofType === 0) {
+                        // Плоская с парапетом
+                        this.placeVillageBlock(chunk, x, hy + h, z, BLOCK.PLANK);
+                        if (x === hx || x === hx + w - 1 || z === hz || z === hz + d - 1) {
+                            this.placeVillageBlock(chunk, x, hy + h + 1, z, BLOCK.WOOD);
+                        }
+                    } else if (roofType === 1) {
+                        // Двускатная крыша по оси X
+                        const midX = hx + Math.floor(w / 2);
+                        const dist = Math.abs(x - midX);
+                        this.placeVillageBlock(chunk, x, hy + h + (w - 1 - dist * 2) - 1, z, BLOCK.PLANK);
+                    } else if (roofType === 2) {
+                        // Пирамидальная ступенчатая крыша
+                        const dist = Math.min(x - hx, (hx + w - 1) - x, z - hz, (hz + d - 1) - z);
+                        this.placeVillageBlock(chunk, x, hy + h + dist, z, BLOCK.PLANK);
+                    }
+                }
+            }
+        }
+        // Дверной проём
+        const doorX = hx + Math.floor(w / 2);
+        this.placeVillageBlock(chunk, doorX, hy, hz, BLOCK.AIR);
+        this.placeVillageBlock(chunk, doorX, hy + 1, hz, BLOCK.AIR);
     }
 
     generateFarmInChunk(chunk, fx, fy, fz) {
@@ -623,13 +886,11 @@ class World {
         for (let x = fx; x < fx + w; x++) {
             for (let z = fz; z < fz + d; z++) {
                 if (Math.floor(x / CHUNK_SIZE) !== chunk.cx || Math.floor(z / CHUNK_SIZE) !== chunk.cz) continue;
-                const bx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-                const bz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-
-                for (let y = fy; y < CHUNK_HEIGHT; y++) chunk.setBlock(bx, y, bz, BLOCK.AIR);
-                if (x === fx || x === fx + w - 1 || z === fz || z === fz + d - 1) chunk.setBlock(bx, fy - 1, bz, BLOCK.WOOD);
-                else if (x === fx + 2 && z === fz + 2) chunk.setBlock(bx, fy - 1, bz, BLOCK.WATER);
-                else { chunk.setBlock(bx, fy - 1, bz, BLOCK.DIRT); chunk.setBlock(bx, fy, bz, BLOCK.GRASS); }
+                
+                for (let y = fy; y < CHUNK_HEIGHT; y++) this.placeVillageBlock(chunk, x, y, z, BLOCK.AIR);
+                if (x === fx || x === fx + w - 1 || z === fz || z === fz + d - 1) this.placeVillageBlock(chunk, x, fy - 1, z, BLOCK.WOOD);
+                else if (x === fx + 2 && z === fz + 2) this.placeVillageBlock(chunk, x, fy - 1, z, BLOCK.WATER);
+                else { this.placeVillageBlock(chunk, x, fy - 1, z, BLOCK.DIRT); this.placeVillageBlock(chunk, x, fy, z, BLOCK.GRASS); }
             }
         }
     }
@@ -665,14 +926,12 @@ class World {
         const renderRadius = 4;
         const unloadRadius = 6; 
 
-        // 1. Поиск новых чанков для загрузки и добавление их в очередь
         for (let x = pCx - renderRadius; x <= pCx + renderRadius; x++) {
             for (let z = pCz - renderRadius; z <= pCz + renderRadius; z++) {
                 const key = this.getChunkKey(x, z);
                 let chunk = this.chunks[key];
 
                 if (!chunk) {
-                    // Исключение: чанк прямо под игроком генерируем сразу (чтобы не провалиться на старте игры)
                     if (x === pCx && z === pCz) {
                         chunk = this.generateChunk(x, z);
                         this.chunks[key] = chunk;
@@ -698,12 +957,11 @@ class World {
             }
         }
 
-        // 2. Сортировка очередей (чем ближе к игроку, тем быстрее обрабатываем)
         if (this.chunkGenQueue.length > 1) {
             this.chunkGenQueue.sort((a, b) => {
                 const distA = (a.x - pCx)**2 + (a.z - pCz)**2;
                 const distB = (b.x - pCx)**2 + (b.z - pCz)**2;
-                return distB - distA; // Дальние в начало, чтобы метод pop() доставал самые ближние
+                return distB - distA;
             });
         }
 
@@ -715,7 +973,6 @@ class World {
             });
         }
 
-        // 3. Обработка очередей со строгим ограничением по времени (~6 мс на кадр)
         const startTime = performance.now();
         const MAX_TIME_MS = 6.0;
 
@@ -745,14 +1002,13 @@ class World {
             }
         }
 
-        // 4. Постепенная выгрузка дальних чанков для очистки WebGL памяти
         if (performance.now() - startTime < MAX_TIME_MS) {
             for (let key in this.chunks) {
                 const chunk = this.chunks[key];
                 if (Math.abs(chunk.cx - pCx) > unloadRadius || Math.abs(chunk.cz - pCz) > unloadRadius) {
                     if (chunk.mesh) {
                         scene.remove(chunk.mesh);
-                        if (chunk.mesh.geometry) chunk.mesh.geometry.dispose(); // Предотвращает утечку видеопамяти
+                        if (chunk.mesh.geometry) chunk.mesh.geometry.dispose();
                         chunk.mesh = null; 
                     }
                 }
@@ -775,7 +1031,6 @@ class World {
         const indices = [];
         let indexOffset = 0;
 
-        // Предварительная выборка соседних чанков для сверхбыстрых проверок на границах
         const chunkLeft  = this.chunks[this.getChunkKey(chunk.cx - 1, chunk.cz)];
         const chunkRight = this.chunks[this.getChunkKey(chunk.cx + 1, chunk.cz)];
         const chunkBack  = this.chunks[this.getChunkKey(chunk.cx, chunk.cz - 1)];
@@ -833,6 +1088,8 @@ class World {
                                 if (face.dir[1] === 1) faceTileIndex = 14; 
                                 else if (face.dir[1] === -1) faceTileIndex = 5; 
                                 else faceTileIndex = 13; 
+                            } else if (block === BLOCK.CHEST) {
+                                faceTileIndex = 19;
                             }
 
                             const tu = faceTileIndex % 16;
