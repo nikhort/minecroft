@@ -1,6 +1,7 @@
 // ==========================================
 // ФАЙЛ: world.js
 // Хранение вокселей, генерация ландшафта и деревень на основе Seed
+// (Оптимизированная версия с высокой производительностью)
 // ==========================================
 
 const CHUNK_SIZE = 16;
@@ -100,6 +101,15 @@ class World {
         this.chunks = {};
         this.spawnedVillages = new Set();
         this.modifiedBlocks = new Map();
+        this.chunkMods = new Map(); // Быстрый индекс модификаций по координатам чанка
+        this.villageCache = new Map(); // Кеш расчёта деревень для регионов
+        
+        // Очереди для постепенной генерации и создания Mesh
+        this.chunkGenQueue = [];
+        this.chunkMeshQueue = [];
+        this.queuedForGen = new Set();
+        this.queuedForMesh = new Set();
+        
         this.loadModifiedBlocks();
     }
 
@@ -107,18 +117,42 @@ class World {
 
     getBlockWorld(x, y, z) {
         if (y < 0 || y >= CHUNK_HEIGHT) return BLOCK.AIR;
-        const modKey = `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`;
+        const fx = Math.floor(x);
+        const fy = Math.floor(y);
+        const fz = Math.floor(z);
+        
+        const modKey = `${fx},${fy},${fz}`;
         if (this.modifiedBlocks.has(modKey)) return this.modifiedBlocks.get(modKey);
 
-        const cx = Math.floor(x / CHUNK_SIZE);
-        const cz = Math.floor(z / CHUNK_SIZE);
+        const cx = Math.floor(fx / CHUNK_SIZE);
+        const cz = Math.floor(fz / CHUNK_SIZE);
         const key = this.getChunkKey(cx, cz);
         const chunk = this.chunks[key];
         if (!chunk) return BLOCK.AIR;
 
-        const bx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-        const bz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
-        return chunk.getBlock(bx, y, bz);
+        const bx = ((fx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const bz = ((fz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        return chunk.getBlock(bx, fy, bz);
+    }
+
+    addChunkMod(fx, fy, fz, val) {
+        const cx = Math.floor(fx / CHUNK_SIZE);
+        const cz = Math.floor(fz / CHUNK_SIZE);
+        const bx = ((fx % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const bz = ((fz % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+        const key = this.getChunkKey(cx, cz);
+        
+        if (!this.chunkMods.has(key)) {
+            this.chunkMods.set(key, []);
+        }
+        const list = this.chunkMods.get(key);
+        for (let i = 0; i < list.length; i++) {
+            if (list[i].bx === bx && list[i].y === fy && list[i].bz === bz) {
+                list[i].val = val;
+                return;
+            }
+        }
+        list.push({ bx, y: fy, bz, val });
     }
 
     setBlockWorld(x, y, z, val) {
@@ -129,6 +163,7 @@ class World {
         
         const modKey = `${fx},${fy},${fz}`;
         this.modifiedBlocks.set(modKey, val);
+        this.addChunkMod(fx, fy, fz, val);
         this.saveModifiedBlocks();
 
         const cx = Math.floor(fx / CHUNK_SIZE);
@@ -153,14 +188,23 @@ class World {
     }
 
     loadModifiedBlocks() {
+        this.chunkMods = new Map();
         try {
             const saved = localStorage.getItem(`jscraft_mods_${this.seed}`);
             if (saved) {
                 const data = JSON.parse(saved);
                 this.modifiedBlocks = new Map(data);
+                for (let [keyStr, val] of this.modifiedBlocks.entries()) {
+                    const parts = keyStr.split(',');
+                    const fx = parseInt(parts[0], 10);
+                    const fy = parseInt(parts[1], 10);
+                    const fz = parseInt(parts[2], 10);
+                    this.addChunkMod(fx, fy, fz, val);
+                }
             }
         } catch (e) {
             this.modifiedBlocks = new Map();
+            this.chunkMods = new Map();
         }
     }
 
@@ -174,6 +218,17 @@ class World {
 
     generateChunk(cx, cz) {
         const chunk = new Chunk(cx, cz);
+
+        // Предварительно собираем информацию о деревнях вокруг, чтобы не считать это внутри цикла деревьев
+        const nearbyVillages = [];
+        const regionX = Math.floor(cx / 8);
+        const regionZ = Math.floor(cz / 8);
+        for (let rx = regionX - 1; rx <= regionX + 1; rx++) {
+            for (let rz = regionZ - 1; rz <= regionZ + 1; rz++) {
+                const v = this.getVillageInRegion(rx, rz);
+                if (v) nearbyVillages.push(v);
+            }
+        }
 
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
@@ -222,15 +277,24 @@ class World {
 
                 // Генерация деревьев и цветов
                 if (terrainY > 0 && surfaceBlock === BLOCK.GRASS) {
-                    // ЦВЕТЫ: спавнятся только в очень редких пятнах (патчах) группами
-                    const flowerPatchNoise = smoothNoise(wx * 0.02, wz * 0.02, this.seed + 3000);
+                    const meadowNoise = smoothNoise(wx * 0.015, wz * 0.015, this.seed + 3000); 
+                    const patchNoise = smoothNoise(wx * 0.1, wz * 0.1, this.seed + 3001);     
                     const flowerRNG = hash2D(wx, wz, this.seed + 4000);
                     
-                    if (flowerPatchNoise > 0.8 && flowerRNG < 0.05) {
+                    let flowerChance = 0;
+                    if (meadowNoise > 0.72) {
+                        flowerChance = 0.15; 
+                    } else if (patchNoise > 0.75) {
+                        flowerChance = 0.08; 
+                    } else {
+                        flowerChance = 0.001; 
+                    }
+
+                    if (flowerRNG < flowerChance) {
                         chunk.setBlock(x, terrainY + 1, z, BLOCK.FLOWER);
                     }
 
-                    // ЛЕСА: Естественная плотность через шум
+                    // ЛЕСА
                     const forestDensityNoise = smoothNoise(wx * 0.03, wz * 0.03, this.seed + 2000);
                     let treeChance = 0;
                     
@@ -239,21 +303,19 @@ class World {
                     } else if (biomeType === 'sparse_forest') {
                         treeChance = forestDensityNoise > 0.5 ? 0.03 : 0.002;
                     } else if (biomeType === 'forest') {
-                        if (forestDensityNoise > 0.65) treeChance = 0.15; // Густой лес
-                        else if (forestDensityNoise > 0.4) treeChance = 0.06; // Обычный лес
-                        else treeChance = 0.005; // Поляны в лесу
-                    } else { // Равнины
+                        if (forestDensityNoise > 0.65) treeChance = 0.15;
+                        else if (forestDensityNoise > 0.4) treeChance = 0.06;
+                        else treeChance = 0.005; 
+                    } else { 
                         treeChance = forestDensityNoise > 0.8 ? 0.002 : 0.0001; 
                     }
 
                     const treeHash = hash2D(wx, wz, this.seed + 777);
 
                     if (treeHash < treeChance) {
-                        const isMega = (biomeType === 'forest' && hash2D(wx, wz, this.seed + 999) < 0.015);
-                        const radius = isMega ? 5 : 2; // Мега-дереву нужно больше места
+                        const radius = 2; 
                         
                         let spaced = true;
-                        // Локальный максимум: проверяем соседей на более высокий приоритет спавна
                         for (let dx = -radius; dx <= radius; dx++) {
                             for (let dz = -radius; dz <= radius; dz++) {
                                 if (dx === 0 && dz === 0) continue;
@@ -267,24 +329,18 @@ class World {
 
                         let inVillage = false;
                         if (spaced) {
-                            const regionX = Math.floor(wx / 8 / CHUNK_SIZE);
-                            const regionZ = Math.floor(wz / 8 / CHUNK_SIZE);
-                            for (let rx = regionX - 1; rx <= regionX + 1; rx++) {
-                                for (let rz = regionZ - 1; rz <= regionZ + 1; rz++) {
-                                    const v = this.getVillageInRegion(rx, rz);
-                                    if (v) {
-                                        const distSq = (wx - v.worldX)**2 + (wz - v.worldZ)**2;
-                                        if (distSq < 400) { // Деревья не растут близко к центру деревни
-                                            inVillage = true;
-                                            break;
-                                        }
-                                    }
+                            for (let i = 0; i < nearbyVillages.length; i++) {
+                                const v = nearbyVillages[i];
+                                const distSq = (wx - v.worldX)**2 + (wz - v.worldZ)**2;
+                                if (distSq < 400) { 
+                                    inVillage = true;
+                                    break;
                                 }
-                                if (inVillage) break;
                             }
                         }
 
                         if (spaced && !inVillage) {
+                            const isMega = (biomeType === 'forest' && hash2D(wx, wz, this.seed + 999) < 0.0125); 
                             this.buildTree(chunk, x, terrainY + 1, z, treeHash, isMega);
                         }
                     }
@@ -295,16 +351,13 @@ class World {
         this.generateOreVeins(chunk, cx, cz, this.seed);
         this.generateVillageElementsForChunk(chunk, cx, cz);
 
-        for (let x = 0; x < CHUNK_SIZE; x++) {
-            for (let z = 0; z < CHUNK_SIZE; z++) {
-                for (let y = 0; y < CHUNK_HEIGHT; y++) {
-                    const wx = cx * CHUNK_SIZE + x;
-                    const wz = cz * CHUNK_SIZE + z;
-                    const modKey = `${wx},${y},${wz}`;
-                    if (this.modifiedBlocks.has(modKey)) {
-                        chunk.setBlock(x, y, z, this.modifiedBlocks.get(modKey));
-                    }
-                }
+        // Быстрое применение модификаций игрока из индексированного списка
+        const chunkKey = this.getChunkKey(cx, cz);
+        const mods = this.chunkMods.get(chunkKey);
+        if (mods) {
+            for (let i = 0; i < mods.length; i++) {
+                const m = mods[i];
+                chunk.setBlock(m.bx, m.y, m.bz, m.val);
             }
         }
 
@@ -342,10 +395,6 @@ class World {
         }
     }
 
-    // ==========================================
-    // ГЕНЕРАЦИЯ ДЕРЕВЬЕВ
-    // ==========================================
-
     safeSetTrunk(chunk, nx, ny, nz) {
         if (nx >= 0 && nx < CHUNK_SIZE && nz >= 0 && nz < CHUNK_SIZE && ny >= 0 && ny < CHUNK_HEIGHT) {
             chunk.setBlock(nx, ny, nz, BLOCK.WOOD);
@@ -369,9 +418,8 @@ class World {
     }
 
     buildMegaTree(chunk, tx, ty, tz, randomHash) {
-        const height = 12 + Math.floor(randomHash * 100) % 6; // Высота ствола от 12 до 17 блоков
+        const height = 12 + Math.floor(randomHash * 100) % 6; 
         
-        // Ствол 2x2
         for (let h = 0; h < height; h++) {
             this.safeSetTrunk(chunk, tx, ty + h, tz);
             this.safeSetTrunk(chunk, tx + 1, ty + h, tz);
@@ -379,26 +427,23 @@ class World {
             this.safeSetTrunk(chunk, tx + 1, ty + h, tz + 1);
         }
         
-        // Случайная ветка
         if (randomHash > 0.5 && height > 14) {
             this.safeSetTrunk(chunk, tx - 1, ty + height - 5, tz);
             this.safeSetLeaf(chunk, tx - 2, ty + height - 5, tz);
         }
         
-        // Крона мега-дерева
         const leafBottom = ty + height - 7;
         const leafTop = ty + height + 2;
         for (let ny = leafBottom; ny <= leafTop; ny++) {
             let r = 3;
             if (ny === leafBottom || ny === leafTop) r = 1;
             else if (ny === leafBottom + 1 || ny === leafTop - 1) r = 2;
-            else if (ny === ty + height - 3) r = 4; // Самая широкая часть кроны
+            else if (ny === ty + height - 3) r = 4;
 
-            for (let dx = -r; dx <= r + 1; dx++) { // +1 из-за толщины ствола
+            for (let dx = -r; dx <= r + 1; dx++) {
                 for (let dz = -r; dz <= r + 1; dz++) {
                     let centerX = dx < 1 ? dx : dx - 1;
                     let centerZ = dz < 1 ? dz : dz - 1;
-                    // Обрезаем углы для естественной формы
                     if (Math.abs(centerX) + Math.abs(centerZ) > r + 1) continue;
                     
                     this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
@@ -414,21 +459,19 @@ class World {
 
         if (typeVal < 30) {
             type = 'small';
-            height = 3 + Math.floor(randomHash * 100) % 2; // Высота 3-4
+            height = 3 + Math.floor(randomHash * 100) % 2; 
         } else if (typeVal < 70) {
             type = 'medium';
-            height = 4 + Math.floor(randomHash * 100) % 3; // Высота 4-6
+            height = 4 + Math.floor(randomHash * 100) % 3; 
         } else {
             type = 'large';
-            height = 6 + Math.floor(randomHash * 100) % 3; // Высота 6-8
+            height = 6 + Math.floor(randomHash * 100) % 3; 
         }
 
-        // Центральный ствол (ставим до листвы, чтобы листва не заменяла древесину)
         for (let h = 0; h < height; h++) {
             this.safeSetTrunk(chunk, tx, ty + h, tz);
         }
 
-        // Генерация листвы
         let leafBottom, leafTop;
         if (type === 'small') {
             leafBottom = ty + height - 2;
@@ -437,7 +480,6 @@ class World {
                 const r = 1;
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dz = -r; dz <= r; dz++) {
-                        // Скругляем макушку
                         if (Math.abs(dx) === r && Math.abs(dz) === r && ny === leafTop) continue;
                         this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
                     }
@@ -450,7 +492,6 @@ class World {
                 const r = (ny >= ty + height) ? 1 : 2;
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dz = -r; dz <= r; dz++) {
-                        // Скругляем низ кроны и макушку
                         if (Math.abs(dx) === r && Math.abs(dz) === r && (ny === leafBottom || ny === leafTop)) continue;
                         this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
                     }
@@ -462,10 +503,9 @@ class World {
             for (let ny = leafBottom; ny <= leafTop; ny++) {
                 let r = 2;
                 if (ny === leafBottom || ny === leafTop) r = 1;
-                if (ny === ty + height - 1) r = 3; // Широкая юбка
+                if (ny === ty + height - 1) r = 3; 
                 for (let dx = -r; dx <= r; dx++) {
                     for (let dz = -r; dz <= r; dz++) {
-                        // Скругляем широкие уровни
                         if (Math.abs(dx) === r && Math.abs(dz) === r && r > 1) continue;
                         this.safeSetLeaf(chunk, tx + dx, ny, tz + dz);
                     }
@@ -474,16 +514,18 @@ class World {
         }
     }
 
-    // ==========================================
-    // ДЕРЕВНИ
-    // ==========================================
-
     getVillageInRegion(regionX, regionZ) {
+        const cacheKey = `${regionX},${regionZ}`;
+        if (this.villageCache.has(cacheKey)) return this.villageCache.get(cacheKey);
+
         const regSeed = Math.imul(regionX, 1597334677) ^ Math.imul(regionZ, 3812015801) ^ this.seed;
         const prng = new SeededPRNG(regSeed);
-        if (prng.next() > 0.60) return null;
+        if (prng.next() > 0.60) {
+            this.villageCache.set(cacheKey, null);
+            return null;
+        }
 
-        return {
+        const village = {
             cx: regionX * 8 + Math.floor(prng.next() * 6) + 1,
             cz: regionZ * 8 + Math.floor(prng.next() * 6) + 1,
             worldX: (regionX * 8 + Math.floor(prng.next() * 6) + 1) * CHUNK_SIZE + 8,
@@ -494,6 +536,8 @@ class World {
             villagerCount: Math.floor(prng.next() * 5) + 3,
             prngSeed: regSeed
         };
+        this.villageCache.set(cacheKey, village);
+        return village;
     }
 
     generateVillageElementsForChunk(chunk, cx, cz) {
@@ -591,15 +635,15 @@ class World {
     }
 
     checkVillagerSpawns(game, cx, cz) {
+        const key = `${cx},${cz}`;
+        if (this.spawnedVillages.has(key)) return;
+        this.spawnedVillages.add(key);
+
         const regionX = Math.floor(cx / 8);
         const regionZ = Math.floor(cz / 8);
         const village = this.getVillageInRegion(regionX, regionZ);
 
         if (village && village.cx === cx && village.cz === cz) {
-            const key = `${cx},${cz}`;
-            if (this.spawnedVillages.has(key)) return;
-            this.spawnedVillages.add(key);
-
             const prng = new SeededPRNG(village.prngSeed + 999);
             for (let i = 0; i < village.villagerCount; i++) {
                 const vx = village.worldX + Math.floor(prng.next() * 16 - 8);
@@ -612,27 +656,118 @@ class World {
         }
     }
 
+    // ==========================================
+    // ОПТИМИЗИРОВАННЫЙ ЦИКЛ ОБНОВЛЕНИЯ ЧАНКОВ (Time-Slicing)
+    // ==========================================
     updateVisibleChunks(playerX, playerZ, scene, materials, game = window.gameInstance) {
         const pCx = Math.floor(playerX / CHUNK_SIZE);
         const pCz = Math.floor(playerZ / CHUNK_SIZE);
         const renderRadius = 4;
+        const unloadRadius = 6; 
 
+        // 1. Поиск новых чанков для загрузки и добавление их в очередь
         for (let x = pCx - renderRadius; x <= pCx + renderRadius; x++) {
             for (let z = pCz - renderRadius; z <= pCz + renderRadius; z++) {
                 const key = this.getChunkKey(x, z);
                 let chunk = this.chunks[key];
+
                 if (!chunk) {
-                    chunk = this.generateChunk(x, z);
-                    this.chunks[key] = chunk;
+                    // Исключение: чанк прямо под игроком генерируем сразу (чтобы не провалиться на старте игры)
+                    if (x === pCx && z === pCz) {
+                        chunk = this.generateChunk(x, z);
+                        this.chunks[key] = chunk;
+                        this.chunkMeshQueue.push(chunk);
+                        this.queuedForMesh.add(key);
+                        if (game) this.checkVillagerSpawns(game, x, z);
+                    } else if (!this.queuedForGen.has(key)) {
+                        this.chunkGenQueue.push({x, z});
+                        this.queuedForGen.add(key);
+                    }
+                } else {
+                    if (game) this.checkVillagerSpawns(game, x, z);
+                    
+                    if ((chunk.isDirty || !chunk.mesh) && !this.queuedForMesh.has(key)) {
+                        this.chunkMeshQueue.push(chunk);
+                        this.queuedForMesh.add(key);
+                    }
+                    
+                    if (chunk.mesh && !scene.children.includes(chunk.mesh)) {
+                        scene.add(chunk.mesh);
+                    }
                 }
-                if (game) this.checkVillagerSpawns(game, x, z);
-                if (chunk.isDirty || !chunk.mesh) this.rebuildChunkGeometry(chunk, scene, materials);
+            }
+        }
+
+        // 2. Сортировка очередей (чем ближе к игроку, тем быстрее обрабатываем)
+        if (this.chunkGenQueue.length > 1) {
+            this.chunkGenQueue.sort((a, b) => {
+                const distA = (a.x - pCx)**2 + (a.z - pCz)**2;
+                const distB = (b.x - pCx)**2 + (b.z - pCz)**2;
+                return distB - distA; // Дальние в начало, чтобы метод pop() доставал самые ближние
+            });
+        }
+
+        if (this.chunkMeshQueue.length > 1) {
+            this.chunkMeshQueue.sort((a, b) => {
+                const distA = (a.cx - pCx)**2 + (a.cz - pCz)**2;
+                const distB = (b.cx - pCx)**2 + (b.cz - pCz)**2;
+                return distB - distA;
+            });
+        }
+
+        // 3. Обработка очередей со строгим ограничением по времени (~6 мс на кадр)
+        const startTime = performance.now();
+        const MAX_TIME_MS = 6.0;
+
+        while (this.chunkGenQueue.length > 0 && (performance.now() - startTime < MAX_TIME_MS)) {
+            const target = this.chunkGenQueue.pop();
+            const key = this.getChunkKey(target.x, target.z);
+            this.queuedForGen.delete(key);
+            
+            if (!this.chunks[key]) {
+                const chunk = this.generateChunk(target.x, target.z);
+                this.chunks[key] = chunk;
+                if (game) this.checkVillagerSpawns(game, target.x, target.z);
+                if (!this.queuedForMesh.has(key)) {
+                    this.chunkMeshQueue.push(chunk);
+                    this.queuedForMesh.add(key);
+                }
+            }
+        }
+
+        while (this.chunkMeshQueue.length > 0 && (performance.now() - startTime < MAX_TIME_MS)) {
+            const chunk = this.chunkMeshQueue.pop();
+            const key = this.getChunkKey(chunk.cx, chunk.cz);
+            this.queuedForMesh.delete(key);
+            
+            if (this.chunks[key]) {
+                this.rebuildChunkGeometry(chunk, scene, materials);
+            }
+        }
+
+        // 4. Постепенная выгрузка дальних чанков для очистки WebGL памяти
+        if (performance.now() - startTime < MAX_TIME_MS) {
+            for (let key in this.chunks) {
+                const chunk = this.chunks[key];
+                if (Math.abs(chunk.cx - pCx) > unloadRadius || Math.abs(chunk.cz - pCz) > unloadRadius) {
+                    if (chunk.mesh) {
+                        scene.remove(chunk.mesh);
+                        if (chunk.mesh.geometry) chunk.mesh.geometry.dispose(); // Предотвращает утечку видеопамяти
+                        chunk.mesh = null; 
+                    }
+                }
             }
         }
     }
 
+    // ==========================================
+    // ZERO-ALLOCATION ПОСТРОЕНИЕ СЕТКИ
+    // ==========================================
     rebuildChunkGeometry(chunk, scene, materials) {
-        if (chunk.mesh) scene.remove(chunk.mesh);
+        if (chunk.mesh) {
+            scene.remove(chunk.mesh);
+            if (chunk.mesh.geometry) chunk.mesh.geometry.dispose();
+        }
 
         const geometry = new THREE.BufferGeometry();
         const positions = [];
@@ -640,30 +775,57 @@ class World {
         const indices = [];
         let indexOffset = 0;
 
+        // Предварительная выборка соседних чанков для сверхбыстрых проверок на границах
+        const chunkLeft  = this.chunks[this.getChunkKey(chunk.cx - 1, chunk.cz)];
+        const chunkRight = this.chunks[this.getChunkKey(chunk.cx + 1, chunk.cz)];
+        const chunkBack  = this.chunks[this.getChunkKey(chunk.cx, chunk.cz - 1)];
+        const chunkFront = this.chunks[this.getChunkKey(chunk.cx, chunk.cz + 1)];
+
+        const getNeighborFast = (lx, ly, lz) => {
+            if (ly < 0 || ly >= CHUNK_HEIGHT) return BLOCK.AIR;
+            if (lx >= 0 && lx < CHUNK_SIZE && lz >= 0 && lz < CHUNK_SIZE) {
+                return chunk.blocks[lx + lz * CHUNK_SIZE + ly * CHUNK_SIZE * CHUNK_SIZE];
+            }
+            if (lx < 0) {
+                return chunkLeft ? chunkLeft.blocks[(lx + CHUNK_SIZE) + lz * CHUNK_SIZE + ly * CHUNK_SIZE * CHUNK_SIZE] : BLOCK.AIR;
+            }
+            if (lx >= CHUNK_SIZE) {
+                return chunkRight ? chunkRight.blocks[(lx - CHUNK_SIZE) + lz * CHUNK_SIZE + ly * CHUNK_SIZE * CHUNK_SIZE] : BLOCK.AIR;
+            }
+            if (lz < 0) {
+                return chunkBack ? chunkBack.blocks[lx + (lz + CHUNK_SIZE) * CHUNK_SIZE + ly * CHUNK_SIZE * CHUNK_SIZE] : BLOCK.AIR;
+            }
+            if (lz >= CHUNK_SIZE) {
+                return chunkFront ? chunkFront.blocks[lx + (lz - CHUNK_SIZE) * CHUNK_SIZE + ly * CHUNK_SIZE * CHUNK_SIZE] : BLOCK.AIR;
+            }
+            return BLOCK.AIR;
+        };
+
+        const faces = [
+            { dir: [0, 0, 1], verts: [[0,0,1], [1,0,1], [1,1,1], [0,1,1]] },
+            { dir: [0, 0, -1], verts: [[1,0,0], [0,0,0], [0,1,0], [1,1,0]] },
+            { dir: [1, 0, 0], verts: [[1,0,1], [1,0,0], [1,1,0], [1,1,1]] },
+            { dir: [-1, 0, 0], verts: [[0,0,0], [0,0,1], [0,1,1], [0,1,0]] },
+            { dir: [0, 1, 0], verts: [[0,1,1], [1,1,1], [1,1,0], [0,1,0]] },
+            { dir: [0, -1, 0], verts: [[0,0,0], [1,0,0], [1,0,1], [0,0,1]] }
+        ];
+
         for (let x = 0; x < CHUNK_SIZE; x++) {
             for (let z = 0; z < CHUNK_SIZE; z++) {
                 for (let y = 0; y < CHUNK_HEIGHT; y++) {
-                    const block = chunk.getBlock(x, y, z);
+                    const block = chunk.blocks[x + z * CHUNK_SIZE + y * CHUNK_SIZE * CHUNK_SIZE];
                     if (block === BLOCK.AIR) continue;
 
                     const wx = chunk.cx * CHUNK_SIZE + x;
                     const wz = chunk.cz * CHUNK_SIZE + z;
 
-                    const faces = [
-                        { dir: [0, 0, 1], verts: [[0,0,1], [1,0,1], [1,1,1], [0,1,1]] },
-                        { dir: [0, 0, -1], verts: [[1,0,0], [0,0,0], [0,1,0], [1,1,0]] },
-                        { dir: [1, 0, 0], verts: [[1,0,1], [1,0,0], [1,1,0], [1,1,1]] },
-                        { dir: [-1, 0, 0], verts: [[0,0,0], [0,0,1], [0,1,1], [0,1,0]] },
-                        { dir: [0, 1, 0], verts: [[0,1,1], [1,1,1], [1,1,0], [0,1,0]] },
-                        { dir: [0, -1, 0], verts: [[0,0,0], [1,0,0], [1,0,1], [0,0,1]] }
-                    ];
-
-                    faces.forEach((face) => {
-                        const nx = wx + face.dir[0];
+                    for (let f = 0; f < 6; f++) {
+                        const face = faces[f];
+                        const nx = x + face.dir[0];
                         const ny = y + face.dir[1];
-                        const nz = wz + face.dir[2];
+                        const nz = z + face.dir[2];
 
-                        const neighbor = this.getBlockWorld(nx, ny, nz);
+                        const neighbor = getNeighborFast(nx, ny, nz);
                         if (neighbor === BLOCK.AIR || (neighbor === BLOCK.WATER && block !== BLOCK.WATER)) {
                             
                             let faceTileIndex = block - 1;
@@ -680,9 +842,10 @@ class World {
                             const u1 = u0 + 0.0625;
                             const v1 = v0 + 0.0625;
 
-                            face.verts.forEach((v) => {
-                                positions.push(wx + v[0], y + v[1], wz + v[2]);
-                            });
+                            for (let v = 0; v < 4; v++) {
+                                const vert = face.verts[v];
+                                positions.push(wx + vert[0], y + vert[1], wz + vert[2]);
+                            }
                             uvs.push(u0, v0, u1, v0, u1, v1, u0, v1);
                             indices.push(
                                 indexOffset, indexOffset + 1, indexOffset + 2,
@@ -690,7 +853,7 @@ class World {
                             );
                             indexOffset += 4;
                         }
-                    });
+                    }
                 }
             }
         }
